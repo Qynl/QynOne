@@ -2,25 +2,30 @@ import { AnimatePresence, motion } from "framer-motion";
 import {
   ArrowRight,
   BatteryCharging,
+  Bell,
+  CalendarDays,
   Clock4,
   Cpu,
   FileText,
   MemoryStick,
+  Mic,
+  MicOff,
   Plus,
   Search,
   Sparkles,
   Star,
 } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
-import { AiFace, AiStatusChip } from "../components/AiFace";
+import { AiFace } from "../components/AiFace";
 import { AppIcon } from "../components/AppIcon";
-import { Avatar, useLaunch, useUi } from "../components/ui";
+import { useLaunch, useUi } from "../components/ui";
 import { useAi } from "../lib/ai";
 import { useQyn } from "../lib/store";
 import { useStats } from "../lib/stats";
 import { useSystemInfo } from "../lib/system";
+import { useNexVoice, stopSpeaking } from "../lib/speech";
 import type { AppItem, ViewId } from "../lib/types";
-import { clockTime, greeting, prettyToday } from "../lib/utils";
+import { clockTime, eventSortKey, fmtTime, greeting, isMissed, prettyToday, relativeDay, timeAgo, todayKey } from "../lib/utils";
 import { useVault } from "../lib/vault";
 
 export function HomeView({
@@ -36,56 +41,136 @@ export function HomeView({
 }) {
   return (
     <div className="mx-auto w-full max-w-[1240px] px-5 py-6 md:px-8">
-      <Hero onNavigate={onNavigate} onOpenPalette={onOpenPalette} />
-      <AiPanel />
+      <div className="grid gap-4 lg:grid-cols-[340px_minmax(0,1fr)]">
+        <NowPanel onNavigate={onNavigate} onOpenPalette={onOpenPalette} />
+        <NexStage />
+      </div>
       <Widgets onNavigate={onNavigate} onOpenFolder={onOpenFolder} onOpenNote={onOpenNote} />
     </div>
   );
 }
 
 /* ------------------------------------------------------------------ */
-/* Hero — greeting + live clock + search                               */
+/* Now panel — clock, date, what's next, missed, notifications         */
 /* ------------------------------------------------------------------ */
 
-function Hero({ onNavigate, onOpenPalette }: { onNavigate: (v: ViewId) => void; onOpenPalette: () => void }) {
+function NowPanel({ onNavigate, onOpenPalette }: { onNavigate: (v: ViewId) => void; onOpenPalette: () => void }) {
   const { state } = useQyn();
+  const today = todayKey();
+
+  const todays = useMemo(
+    () =>
+      state.events
+        .filter((e) => e.date === today && !e.done)
+        .sort((a, b) => eventSortKey(a).localeCompare(eventSortKey(b))),
+    [state.events, today],
+  );
+  const upcoming = useMemo(
+    () =>
+      state.events
+        .filter((e) => !e.done && e.date > today)
+        .sort((a, b) => eventSortKey(a).localeCompare(eventSortKey(b)))
+        .slice(0, 3),
+    [state.events, today],
+  );
+  const missed = useMemo(() => state.events.filter((e) => isMissed(e)), [state.events]);
+  const unread = state.notifications.filter((n) => !n.read);
+
   return (
-    <motion.div
-      initial={{ opacity: 0, y: 8 }}
+    <motion.aside
+      initial={{ opacity: 0, y: 10 }}
       animate={{ opacity: 1, y: 0 }}
       transition={{ duration: 0.4, ease: [0.22, 1, 0.36, 1] }}
-      className="flex flex-wrap items-center justify-between gap-4"
+      className="glass flex flex-col rounded-3xl p-5"
     >
-      <div className="flex min-w-0 items-center gap-3.5">
-        <button onClick={() => onNavigate("profile")} title="Your profile" className="shrink-0">
-          <Avatar name={state.profile.name} color={state.profile.color} size={44} ring />
-        </button>
-        <div className="min-w-0">
-          <p className="text-[10.5px] font-semibold uppercase tracking-[0.2em] text-accent">{prettyToday()}</p>
-          <h1 className="mt-0.5 truncate text-[22px] font-bold leading-tight tracking-tight text-frost-100 md:text-[26px]">
+      {/* Clock + date */}
+      <div className="flex items-start justify-between gap-3">
+        <div>
+          <p className="text-[10.5px] font-semibold uppercase tracking-[0.22em] text-accent">{prettyToday()}</p>
+          <p className="mt-1 text-[15px] font-semibold text-frost-200">
             {greeting()}
             {state.profile.name ? `, ${state.profile.name}` : ""}.
-          </h1>
-        </div>
-      </div>
-
-      <div className="flex shrink-0 items-center gap-3">
-        <button
-          onClick={onOpenPalette}
-          className="glass-soft group flex h-10 items-center gap-2.5 rounded-full border px-4 text-[13px] text-frost-400 transition hover:border-[color-mix(in_srgb,var(--accent)_40%,transparent)] hover:text-frost-200"
-        >
-          <Search size={15} className="text-frost-500 transition group-hover:text-accent" />
-          <span className="hidden sm:inline">Search everything</span>
-          <span className="kbd hidden md:inline-flex">Ctrl K</span>
-        </button>
-        <div className="glass hidden rounded-full px-4 py-2 text-right leading-tight sm:block">
-          <p className="text-[15px] font-bold tabular-nums tracking-tight text-frost-100">
+          </p>
+          <p className="mt-2.5 text-[40px] font-bold leading-none tabular-nums tracking-tight text-frost-100">
             <LiveClock />
           </p>
-          <p className="text-[10px] font-medium text-frost-500">your PC, on your terms</p>
+        </div>
+        <button
+          onClick={onOpenPalette}
+          className="glass-soft grid h-9 w-9 shrink-0 place-items-center rounded-full text-frost-400 transition hover:border-[color-mix(in_srgb,var(--accent)_40%,transparent)] hover:text-accent"
+          title="Search (Ctrl+K)"
+        >
+          <Search size={15} />
+        </button>
+      </div>
+
+      {/* What's next */}
+      <div className="mt-5 flex items-center justify-between">
+        <p className="flex items-center gap-1.5 text-[11px] font-semibold uppercase tracking-[0.16em] text-frost-400">
+          <CalendarDays size={12} /> What's next
+        </p>
+        <button onClick={() => onNavigate("calendar")} className="flex items-center gap-1 text-[11px] font-medium text-frost-500 transition hover:text-accent">
+          Calendar <ArrowRight size={10} />
+        </button>
+      </div>
+      <div className="mt-2 space-y-1.5">
+        {todays.length === 0 && upcoming.length === 0 && (
+          <p className="rounded-xl border border-dashed border-white/10 bg-white/[0.02] px-3 py-2.5 text-[12px] text-frost-500">
+            Nothing planned. Say “Nex, add gym tomorrow at 6pm”.
+          </p>
+        )}
+        {todays.map((ev) => (
+          <button key={ev.id} onClick={() => onNavigate("calendar")} className="flex w-full items-center gap-2.5 rounded-xl bg-accent-soft px-3 py-2 text-left transition hover:bg-[color-mix(in_srgb,var(--accent)_20%,transparent)]">
+            <span className="glass-soft grid h-8 w-14 shrink-0 place-items-center rounded-lg text-[10.5px] font-bold tabular-nums text-frost-200">
+              {ev.start ? fmtTime(ev.start) : "ALL DAY"}
+            </span>
+            <span className="min-w-0 flex-1 truncate text-[12.5px] font-medium text-frost-100">{ev.title}</span>
+            <span className="text-[9.5px] font-semibold uppercase tracking-wider text-accent">today</span>
+          </button>
+        ))}
+        {upcoming.map((ev) => (
+          <button key={ev.id} onClick={() => onNavigate("calendar")} className="flex w-full items-center gap-2.5 rounded-xl px-2.5 py-1.5 text-left transition hover:bg-white/4">
+            <span className="w-14 shrink-0 text-[10.5px] font-semibold tabular-nums text-frost-500">{ev.start ? fmtTime(ev.start) : "·"}</span>
+            <span className="min-w-0 flex-1 truncate text-[12.5px] font-medium text-frost-200">{ev.title}</span>
+            <span className="shrink-0 text-[10px] text-frost-500">{relativeDay(ev.date)}</span>
+          </button>
+        ))}
+      </div>
+
+      {missed.length > 0 && (
+        <button onClick={() => onNavigate("calendar")} className="mt-2.5 flex items-center gap-2 rounded-xl border border-red-400/20 bg-red-400/8 px-3 py-2 text-left transition hover:bg-red-400/12">
+          <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-red-400" />
+          <span className="text-[12px] font-medium text-red-200">{missed.length} missed {missed.length === 1 ? "item" : "items"}</span>
+          <ArrowRight size={11} className="ml-auto shrink-0 text-red-300/70" />
+        </button>
+      )}
+
+      {/* Notifications */}
+      <div className="mt-4 border-t border-white/6 pt-3.5">
+        <p className="flex items-center gap-1.5 text-[11px] font-semibold uppercase tracking-[0.16em] text-frost-400">
+          <Bell size={12} /> Notifications
+          {unread.length > 0 && (
+            <span className="ml-1 grid h-4 min-w-4 place-items-center rounded-full bg-[var(--accent)] px-1 text-[9px] font-bold text-white">{unread.length}</span>
+          )}
+        </p>
+        <div className="mt-2 space-y-1">
+          {state.notifications.length === 0 ? (
+            <p className="text-[11.5px] text-frost-500">All quiet — activity will land here.</p>
+          ) : (
+            state.notifications.slice(0, 2).map((n) => (
+              <div key={n.id} className="flex items-start gap-2 rounded-lg px-1 py-1">
+                <span className={`mt-1 h-1.5 w-1.5 shrink-0 rounded-full ${n.read ? "bg-white/15" : "bg-[var(--accent)] shadow-[0_0_6px_var(--accent-glow)]"}`} />
+                <div className="min-w-0">
+                  <p className="truncate text-[12px] font-medium text-frost-200">{n.title}</p>
+                  <p className="truncate text-[10.5px] text-frost-500">{n.body}</p>
+                </div>
+                <span className="ml-auto shrink-0 text-[9.5px] text-frost-600">{timeAgo(n.time)}</span>
+              </div>
+            ))
+          )}
         </div>
       </div>
-    </motion.div>
+    </motion.aside>
   );
 }
 
@@ -99,15 +184,17 @@ function LiveClock() {
 }
 
 /* ------------------------------------------------------------------ */
-/* AI panel — the face and the chat                                    */
+/* Nex stage — the eyes are the main thing                             */
 /* ------------------------------------------------------------------ */
 
-const SUGGESTIONS = ["What's on my PC right now?", "Open VS Code", "Create a note about my ideas", "Show me the vault graph"];
+const SUGGESTIONS = ["What's on my PC right now?", "Open VS Code", "What's next today?", "Create a note about my ideas"];
 
-function AiPanel() {
-  const { messages, busy, emotion, tools, send, setListening, clearChat } = useAi();
+function NexStage() {
+  const { messages, busy, emotion, tools, send, clearChat, setEmotion } = useAi();
   const [input, setInput] = useState("");
   const [showTools, setShowTools] = useState(false);
+  const [voiceOn, setVoiceOn] = useState(false);
+  const [voiceError, setVoiceError] = useState("");
   const inputRef = useRef<HTMLInputElement>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
 
@@ -116,18 +203,39 @@ function AiPanel() {
     if (el) el.scrollTop = el.scrollHeight;
   }, [messages, busy]);
 
+  useNexVoice({
+    enabled: voiceOn,
+    callbacks: {
+      onWake: () => setEmotion("wake", 2000),
+      onListenStart: () => setEmotion("listening"),
+      onIdle: () => setEmotion("idle"),
+      onCommand: (text) => {
+        void send(text, { voice: true });
+      },
+      onError: (msg) => {
+        setVoiceError(msg);
+        setVoiceOn(false);
+        setEmotion("concerned", 2600);
+      },
+    },
+  });
+
+  useEffect(() => {
+    if (!voiceOn) stopSpeaking();
+  }, [voiceOn]);
+
   const slashFiltered = useMemo(() => {
     if (!showTools) return [];
     const q = input.replace(/^\//, "").trim().toLowerCase();
     return tools.filter((t) => !q || t.name.includes(q) || t.description.toLowerCase().includes(q)).slice(0, 7);
   }, [showTools, input, tools]);
 
-  function submit(text: string) {
+  function submit(text: string, viaVoice = false) {
     const t = text.trim();
     if (!t || busy) return;
     setInput("");
     setShowTools(false);
-    void send(t);
+    void send(t, viaVoice ? { voice: true } : undefined);
   }
 
   return (
@@ -135,41 +243,143 @@ function AiPanel() {
       initial={{ opacity: 0, y: 12 }}
       animate={{ opacity: 1, y: 0 }}
       transition={{ duration: 0.45, delay: 0.05, ease: [0.22, 1, 0.36, 1] }}
-      className="glass relative mt-6 overflow-hidden rounded-3xl"
+      className="glass relative overflow-hidden rounded-3xl"
     >
+      {/* soft stage glow */}
       <div
-        className="pointer-events-none absolute -top-24 left-1/2 h-64 w-[560px] -translate-x-1/2 rounded-full blur-3xl"
-        style={{ background: "radial-gradient(ellipse, var(--accent-glow), transparent 65%)", opacity: 0.4 }}
+        className="pointer-events-none absolute -top-16 left-1/2 h-72 w-[560px] -translate-x-1/2 rounded-full blur-3xl"
+        style={{ background: "radial-gradient(ellipse, var(--accent-glow), transparent 66%)", opacity: 0.55 }}
       />
 
-      <div className="relative grid gap-0 lg:grid-cols-[300px_minmax(0,1fr)]">
-        {/* Face side */}
-        <div className="flex flex-col items-center justify-center border-b border-white/6 px-6 py-7 lg:border-b-0 lg:border-r">
-          <AiFace emotion={emotion} size={132} />
-          <div className="mt-4 flex items-center gap-2.5">
-            <p className="text-[17px] font-bold tracking-tight text-frost-100">Qyn</p>
-            <AiStatusChip emotion={emotion} busy={busy} />
+      <div className="relative flex flex-col items-center px-6 pb-5 pt-9">
+        {/* The eyes — nothing else around them */}
+        <motion.div
+          initial={{ opacity: 0, scale: 0.9 }}
+          animate={{ opacity: 1, scale: 1 }}
+          transition={{ duration: 0.6, ease: [0.22, 1, 0.36, 1] }}
+        >
+          <AiFace emotion={emotion} size={188} />
+        </motion.div>
+
+        {/* mic + voice hint */}
+        <div className="mt-6 flex items-center gap-3">
+          <button
+            onClick={() => {
+              setVoiceError("");
+              setVoiceOn((v) => !v);
+            }}
+            title={voiceOn ? "Stop listening" : "Listen for “Nex”"}
+            className={`relative grid h-11 w-11 place-items-center rounded-full border transition active:scale-95 ${
+              voiceOn
+                ? "border-[color-mix(in_srgb,var(--accent)_55%,transparent)] bg-accent-soft text-accent shadow-[0_0_24px_-4px_var(--accent-glow)]"
+                : "glass-soft border-white/10 text-frost-400 hover:border-[color-mix(in_srgb,var(--accent)_40%,transparent)] hover:text-frost-100"
+            }`}
+          >
+            {voiceOn && <span className="absolute inset-0 animate-ping rounded-full border border-accent/30" />}
+            {voiceOn ? <Mic size={16} /> : <MicOff size={16} />}
+          </button>
+          <div className="max-w-[300px]">
+            <p className="text-[12.5px] font-semibold text-frost-200">
+              {voiceOn ? "Listening for “Nex”…" : "Talk to Nex hands-free"}
+            </p>
+            <p className="text-[11px] leading-relaxed text-frost-500">
+              {voiceOn ? "Say “Nex, open VS Code” — then just speak." : "Tap the mic, say “Nex”, then give a command — like a wake word."}
+            </p>
           </div>
-          <p className="mt-1.5 max-w-[220px] text-center text-[12px] leading-relaxed text-frost-500">
-            Your assistant inside QynOne — it can open your apps, use the vault and watch your PC.
-          </p>
-          {messages.length > 0 && (
-            <button onClick={clearChat} className="mt-3 text-[11px] font-medium text-frost-600 transition hover:text-frost-300">
-              Clear conversation
-            </button>
-          )}
         </div>
 
-        {/* Chat side */}
-        <div className="flex min-w-0 flex-col">
-          <div ref={scrollRef} className="accent-scroll h-[300px] space-y-3 overflow-y-auto px-6 py-5 lg:h-[320px]">
+        {voiceError && (
+          <p className="mt-2 rounded-lg border border-red-400/20 bg-red-400/8 px-3 py-1.5 text-[11px] text-red-200">{voiceError}</p>
+        )}
+
+        {/* Input */}
+        <div className="relative mt-4 w-full max-w-xl">
+          <AnimatePresence>
+            {showTools && slashFiltered.length > 0 && (
+              <motion.div
+                initial={{ opacity: 0, y: 6 }}
+                animate={{ opacity: 1, y: 0 }}
+                exit={{ opacity: 0, y: 4 }}
+                className="glass-strong accent-scroll absolute bottom-[calc(100%-2px)] left-0 right-0 z-20 max-h-56 overflow-y-auto rounded-xl p-1.5 shadow-[0_24px_60px_-20px_rgba(0,0,0,0.85)]"
+              >
+                <p className="px-2.5 pb-1 pt-1 text-[10px] font-semibold uppercase tracking-[0.16em] text-frost-500">Nex's tools</p>
+                {slashFiltered.map((t) => (
+                  <button
+                    key={t.name}
+                    onClick={() => {
+                      setInput(`${t.usage.split(" ")[0]} ${t.usage.replace(/^\S+\s*/, "")}`.replace(/\s+$/, " "));
+                      setShowTools(true);
+                      inputRef.current?.focus();
+                    }}
+                    className="flex w-full items-center gap-2.5 rounded-lg px-2.5 py-2 text-left transition hover:bg-accent-soft"
+                  >
+                    <span className="font-mono text-[11.5px] font-semibold text-accent">/{t.name}</span>
+                    <span className="min-w-0 flex-1">
+                      <span className="block truncate text-[12px] font-medium text-frost-200">{t.description}</span>
+                      <span className="block truncate font-mono text-[10.5px] text-frost-500">{t.usage}</span>
+                    </span>
+                  </button>
+                ))}
+              </motion.div>
+            )}
+          </AnimatePresence>
+
+          <div className="flex items-center gap-2 rounded-full border border-white/10 bg-white/4 px-4 py-1.5 transition focus-within:border-[color-mix(in_srgb,var(--accent)_50%,transparent)] focus-within:bg-white/6 focus-within:shadow-[0_0_0_3px_var(--accent-soft)]">
+            <input
+              ref={inputRef}
+              value={input}
+              onChange={(e) => {
+                setInput(e.target.value);
+                setShowTools(e.target.value.startsWith("/"));
+              }}
+              onFocus={() => setShowTools(input.startsWith("/"))}
+              onBlur={() => setShowTools(false)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter") submit(input);
+                if (e.key === "Escape") setShowTools(false);
+              }}
+              placeholder="Ask Nex anything… ( / for tools )"
+              className="min-w-0 flex-1 bg-transparent py-2 text-[13.5px] text-frost-100 outline-none placeholder:text-frost-500/70"
+            />
+            <button
+              onClick={() => submit(input)}
+              disabled={busy || !input.trim()}
+              className="grid h-8 w-8 shrink-0 place-items-center rounded-full bg-[var(--accent)] text-white transition hover:brightness-110 active:scale-95 disabled:cursor-not-allowed disabled:opacity-40"
+              aria-label="Send"
+            >
+              <ArrowRight size={14} />
+            </button>
+          </div>
+
+          <div className="no-scrollbar mt-2.5 flex justify-center gap-1.5 overflow-x-auto">
+            {SUGGESTIONS.map((s) => (
+              <button
+                key={s}
+                onClick={() => submit(s)}
+                disabled={busy}
+                className="shrink-0 rounded-full border border-white/8 bg-white/3 px-3 py-1 text-[11.5px] font-medium text-frost-400 transition hover:border-[color-mix(in_srgb,var(--accent)_35%,transparent)] hover:text-frost-200 disabled:opacity-40"
+              >
+                {s}
+              </button>
+            ))}
+          </div>
+        </div>
+
+        {/* Chat */}
+        <div className="mt-4 w-full max-w-xl">
+          <div className="flex items-center justify-between px-1">
+            <p className="text-[10px] font-semibold uppercase tracking-[0.16em] text-frost-500">conversation</p>
+            {messages.length > 0 && (
+              <button onClick={clearChat} className="text-[10.5px] font-medium text-frost-600 transition hover:text-frost-300">
+                Clear
+              </button>
+            )}
+          </div>
+          <div ref={scrollRef} className="accent-scroll mt-1.5 h-[168px] space-y-2 overflow-y-auto pr-1">
             {messages.length === 0 && !busy ? (
               <div className="flex h-full flex-col items-center justify-center text-center">
-                <Sparkles size={20} className="text-accent" />
-                <p className="mt-2 text-[14px] font-semibold text-frost-200">Talk to me.</p>
-                <p className="mt-1 max-w-sm text-[12.5px] leading-relaxed text-frost-500">
-                  Ask me to open your apps, manage your vault, or check your PC. Type <span className="font-semibold text-frost-300">/</span> to see the tools I can use directly.
-                </p>
+                <Sparkles size={16} className="text-accent" />
+                <p className="mt-1.5 text-[12.5px] font-medium text-frost-500">The eyes are listening. Ask me anything about your PC.</p>
               </div>
             ) : (
               <>
@@ -178,12 +388,12 @@ function AiPanel() {
                     <div
                       className={
                         m.role === "user"
-                          ? "max-w-[85%] rounded-2xl rounded-br-md bg-[var(--accent)] px-4 py-2.5 text-[13px] leading-relaxed text-white shadow-[0_10px_28px_-12px_var(--accent-glow)]"
-                          : "glass-soft max-w-[90%] rounded-2xl rounded-bl-md px-4 py-2.5 text-[13px] leading-relaxed text-frost-200"
+                          ? "max-w-[85%] rounded-2xl rounded-br-md bg-[var(--accent)] px-3.5 py-2 text-[12.5px] leading-relaxed text-white shadow-[0_10px_28px_-12px_var(--accent-glow)]"
+                          : "glass-soft max-w-[90%] rounded-2xl rounded-bl-md px-3.5 py-2 text-[12.5px] leading-relaxed text-frost-200"
                       }
                     >
                       {m.tool && (
-                        <span className="mb-1 block text-[10.5px] font-semibold uppercase tracking-[0.14em] text-accent">
+                        <span className="mb-0.5 block text-[9.5px] font-semibold uppercase tracking-[0.14em] text-accent">
                           {m.role === "user" ? `/${m.tool}` : `used ${m.tool}`}
                         </span>
                       )}
@@ -192,7 +402,7 @@ function AiPanel() {
                   </div>
                 ))}
                 {busy && (
-                  <div className="flex items-center gap-2 px-1 text-[12px] text-frost-500">
+                  <div className="flex items-center gap-2 px-1 text-[11.5px] text-frost-500">
                     <span className="flex gap-1">
                       {[0, 1, 2].map((i) => (
                         <motion.span
@@ -208,82 +418,6 @@ function AiPanel() {
                 )}
               </>
             )}
-          </div>
-
-          {/* Input */}
-          <div className="relative border-t border-white/6 px-4 pb-4 pt-3">
-            <AnimatePresence>
-              {showTools && slashFiltered.length > 0 && (
-                <motion.div
-                  initial={{ opacity: 0, y: 6 }}
-                  animate={{ opacity: 1, y: 0 }}
-                  exit={{ opacity: 0, y: 4 }}
-                  className="glass-strong accent-scroll absolute bottom-[calc(100%-2px)] left-4 right-4 z-20 max-h-56 overflow-y-auto rounded-xl p-1.5 shadow-[0_24px_60px_-20px_rgba(0,0,0,0.85)]"
-                >
-                  <p className="px-2.5 pb-1 pt-1 text-[10px] font-semibold uppercase tracking-[0.16em] text-frost-500">Qyn's tools</p>
-                  {slashFiltered.map((t) => (
-                    <button
-                      key={t.name}
-                      onClick={() => {
-                        setInput(`${t.usage.split(" ")[0]} ${t.usage.replace(/^\S+\s*/, "")}`.replace(/\s+$/, " "));
-                        setShowTools(true);
-                        inputRef.current?.focus();
-                      }}
-                      className="flex w-full items-center gap-2.5 rounded-lg px-2.5 py-2 text-left transition hover:bg-accent-soft"
-                    >
-                      <span className="font-mono text-[11.5px] font-semibold text-accent">/{t.name}</span>
-                      <span className="min-w-0 flex-1">
-                        <span className="block truncate text-[12px] font-medium text-frost-200">{t.description}</span>
-                        <span className="block truncate font-mono text-[10.5px] text-frost-500">{t.usage}</span>
-                      </span>
-                    </button>
-                  ))}
-                </motion.div>
-              )}
-            </AnimatePresence>
-
-            <div className="flex items-center gap-2 rounded-full border border-white/10 bg-white/4 px-4 py-1.5 transition focus-within:border-[color-mix(in_srgb,var(--accent)_50%,transparent)] focus-within:bg-white/6 focus-within:shadow-[0_0_0_3px_var(--accent-soft)]">
-              <input
-                ref={inputRef}
-                value={input}
-                onChange={(e) => {
-                  setInput(e.target.value);
-                  setShowTools(e.target.value.startsWith("/"));
-                }}
-                onFocus={() => {
-                  setListening(true);
-                  setShowTools(input.startsWith("/"));
-                }}
-                onBlur={() => setListening(false)}
-                onKeyDown={(e) => {
-                  if (e.key === "Enter") submit(input);
-                  if (e.key === "Escape") setShowTools(false);
-                }}
-                placeholder="Ask Qyn anything… ( / for tools )"
-                className="min-w-0 flex-1 bg-transparent py-2 text-[13.5px] text-frost-100 outline-none placeholder:text-frost-500/70"
-              />
-              <button
-                onClick={() => submit(input)}
-                disabled={busy || !input.trim()}
-                className="grid h-8 w-8 shrink-0 place-items-center rounded-full bg-[var(--accent)] text-white transition hover:brightness-110 active:scale-95 disabled:cursor-not-allowed disabled:opacity-40"
-                aria-label="Send"
-              >
-                <ArrowRight size={14} />
-              </button>
-            </div>
-
-            <div className="no-scrollbar mt-2.5 flex gap-1.5 overflow-x-auto">
-              {SUGGESTIONS.map((s) => (
-                <button
-                  key={s}
-                  onClick={() => submit(s)}
-                  disabled={busy}
-                  className="shrink-0 rounded-full border border-white/8 bg-white/3 px-3 py-1 text-[11.5px] font-medium text-frost-400 transition hover:border-[color-mix(in_srgb,var(--accent)_35%,transparent)] hover:text-frost-200 disabled:opacity-40"
-                >
-                  {s}
-                </button>
-              ))}
-            </div>
           </div>
         </div>
       </div>
@@ -311,7 +445,7 @@ function Widgets({
   const favorites = useMemo(() => state.apps.filter((a) => a.favorite), [state.apps]);
 
   return (
-    <div className="mt-6 grid gap-4 lg:grid-cols-2">
+    <div className="mt-4 grid gap-4 lg:grid-cols-2">
       <WidgetCard title="PC status" action={<WidgetLink label="System center" onClick={() => onNavigate("system")} />}>
         <StatusStrip />
       </WidgetCard>
@@ -526,7 +660,7 @@ function KnowledgeStrip({ onOpenNote }: { onOpenNote: (name: string) => void }) 
     return (
       <div className="py-4 text-center">
         <FileText size={18} className="mx-auto text-frost-500/60" />
-        <p className="mt-1.5 text-[12.5px] text-frost-500">Your Markdown vault is empty — start one and Qyn will map it.</p>
+        <p className="mt-1.5 text-[12.5px] text-frost-500">Your Markdown vault is empty — start one and Nex will map it.</p>
         <button
           onClick={() =>
             void vault.createNote("Welcome", "", `# Welcome\n\nThis is your vault. Notes link with [[Wiki Links]] and QynOne builds the graph from them.\n`)

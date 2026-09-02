@@ -2,6 +2,7 @@ import { AnimatePresence, motion } from "framer-motion";
 import {
   Activity,
   BookOpen,
+  CalendarDays,
   FolderOpen,
   Folder,
   Home,
@@ -15,6 +16,7 @@ import type { LucideIcon } from "lucide-react";
 import { useEffect, useState } from "react";
 import { cn } from "./lib/utils";
 import { Backdrop } from "./components/Backdrop";
+import { BootScreen } from "./components/BootScreen";
 import { CommandPalette } from "./components/CommandPalette";
 import { Sidebar } from "./components/Sidebar";
 import { TopBar } from "./components/TopBar";
@@ -25,6 +27,7 @@ import { ACCENTS, WALLPAPERS } from "./lib/theme";
 import type { ViewId } from "./lib/types";
 import { VaultProvider } from "./lib/vault";
 import { AllAppsView } from "./views/AllAppsView";
+import { CalendarView } from "./views/CalendarView";
 import { FileCenterView } from "./views/FileCenterView";
 import { FoldersView } from "./views/FoldersView";
 import { HomeView } from "./views/HomeView";
@@ -53,6 +56,13 @@ function Shell() {
   const [folderId, setFolderId] = useState<string | null>(null);
   const [vaultOpen, setVaultOpen] = useState<string | null>(null);
   const [paletteOpen, setPaletteOpen] = useState(false);
+  const [booted, setBooted] = useState(false);
+
+  /* Boot animation — Nex opens his eyes, then the app fades in. */
+  useEffect(() => {
+    const t = setTimeout(() => setBooted(true), 1900);
+    return () => clearTimeout(t);
+  }, []);
 
   /* Apply accent + wallpaper tokens to the document root. */
   useEffect(() => {
@@ -100,6 +110,7 @@ function Shell() {
     if (view === "system") return <SystemCenterView />;
     if (view === "files") return <FileCenterView />;
     if (view === "tools") return <QuickToolsView />;
+    if (view === "calendar") return <CalendarView />;
     if (view === "vault")
       return (
         <VaultView
@@ -125,6 +136,7 @@ function Shell() {
 
   return (
     <AiProvider onNavigate={(v) => navigate(v as ViewId)} onOpenFolder={openFolder} onOpenNote={openVaultNote}>
+      <BootScreen done={booted} />
       <div className="relative flex h-full flex-col overflow-hidden">
         <Backdrop />
 
@@ -177,6 +189,7 @@ const MOBILE_NAV: Array<{ id: ViewId; label: string; icon: LucideIcon }> = [
   { id: "apps", label: "Apps", icon: LayoutGrid },
   { id: "folders", label: "Folders", icon: FolderOpen },
   { id: "workspaces", label: "Workspaces", icon: Layers },
+  { id: "calendar", label: "Calendar", icon: CalendarDays },
   { id: "vault", label: "Vault", icon: BookOpen },
   { id: "system", label: "System", icon: Activity },
   { id: "files", label: "Files", icon: Folder },

@@ -1,4 +1,4 @@
-export type ViewId = "home" | "apps" | "folders" | "workspaces" | "system" | "files" | "tools" | "vault" | "settings" | "profile";
+export type ViewId = "home" | "apps" | "folders" | "workspaces" | "system" | "files" | "tools" | "vault" | "calendar" | "settings" | "profile";
 
 export interface AppItem {
   id: string;
@@ -70,6 +70,20 @@ export interface Workspace {
 
 export type NotificationKind = "info" | "success" | "warn";
 
+export interface CalendarEvent {
+  id: string;
+  title: string;
+  /** local date key YYYY-MM-DD */
+  date: string;
+  /** "HH:mm" — empty when it's an all-day to-do */
+  start: string;
+  end?: string;
+  notes?: string;
+  done: boolean;
+  createdAt: number;
+}
+
+
 export interface NotificationItem {
   id: string;
   title: string;
@@ -94,6 +108,8 @@ export interface QynState {
   notes: string;
   /** favorite file/folder paths */
   fileFavorites: string[];
+  /** calendar events + to-dos (date-keyed, local) */
+  events: CalendarEvent[];
 }
 
 export interface AccentTheme {

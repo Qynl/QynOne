@@ -11,15 +11,27 @@ broken.
 > **The north star:** you open QynOne once, and you stop thinking about the Windows desktop entirely.
 > "Why would I even use the desktop anymore?"
 
-## What's in QynOne 2.1
+## What's in QynOne 2.2
 
-- **Qyn — a real AI assistant with a face.** Two rectangular eyes on your Home screen that express what it's doing
-  (listening, thinking, working, happy…). Qyn has *real tools* with real access to QynOne: it can open your apps and
-  folders, launch workspaces, read your PC stats, search the vault, create and open notes. Type `/` in the chat to
-  see its tools and use them directly.
-- **Real models only, zero fake.** Qyn is powered by an actual language model you choose — **Ollama (local, free,
+- **Nex — a real AI assistant that is just two eyes.** On Home, the centerpiece is a pair of bare, rectangular
+  white eyes — no face, no panel, no text around them. Those eyes *are* the assistant: they express more than
+  40 distinct emotions (idle, awake, listening, thinking, working, happy, joyful, laughing, love, party,
+  celebrating, excited, proud, grateful, calm, determined, curious, focused, playful, winking, shy, surprised,
+  shocked, sad, crying, worried, scared, confused, angry, sleepy, sleeping, tired, sick, zoned, searching,
+  offline, yes/no nodding, sorry, concerned…) — each with its own eye shape, gaze, tilt, glow, blink rhythm and
+  floating effects: sparkles, stars, hearts, tears, sweat, zzz, pulsing rings and confetti.
+- **Hands-free wake word.** Tap the mic and say **"Nex"** — the eyes light up, then you just talk: *"Nex, open
+  VS Code"*, *"Nex, what's next today?"*. Nex answers out loud. Typing still works the same; type `/` to see its
+  tools and use them directly.
+- **A full working Calendar** that Nex knows about. Month grid, day view, add/edit/delete events and to-dos
+  (with times, or all-day), done-checking, upcoming and **missed** lists. Home shows **What's next** under a live
+  clock with today's events, tomorrow, and anything you missed. Nex can read and manage the calendar by voice or
+  text: `/calendar-today`, `/calendar-add "gym" tomorrow 18:00`, `/calendar-next`, `/calendar-done`. Everything
+  is stored locally in your QynOne state file.
+- **Boot animation** — on launch, Nex opens his eyes on a loading screen before the app fades in.
+- **Real models only, zero fake.** Nex is powered by an actual language model you choose — **Ollama (local, free,
   private)**, **OpenAI**, or any OpenAI-compatible endpoint — configured in **Settings → AI** and saved locally to
-  `qynone.env` on your PC. There is no canned reply engine anywhere: if no model is configured, Qyn says so and
+  `qynone.env` on your PC. There is no canned reply engine anywhere: if no model is configured, Nex says so and
   points you to Settings. There is no simulated anything left in the app — system stats, files, PC info and the
   vault are all real data from the machine (the web preview simply shows nothing where it cannot read the PC).
 - **Markdown Vault + Knowledge Graph 2.0** — a real Obsidian-style vault. On the desktop app the vault is a normal
@@ -36,8 +48,10 @@ broken.
     nodes, search, and filtering by type/folder/orphans.
   - Markdown editing with a live preview, tags (`#project`), full vault search, folders, and unresolved-link
     creation.
-- **Redesigned Home** — a darker, cleaner command center in deep blue-gray-black. The AI face and chat are the
-  centerpiece, with compact PC-status, quick-launch, folders, knowledge and workspace cards around it. The library
+- **Redesigned Home** — a darker, cleaner command center in deep blue-gray-black. A **Now panel** (big live clock,
+  date, What's next, missed items, notifications) sits beside the **Nex eyes stage** — the bare rectangular eyes
+  alone, with a slim voice/text input beneath — and compact PC-status, quick-launch, folders, knowledge and
+  workspace cards below. The library
   starts empty and honest — every tile is something you actually added.
 - **Customizable Home** — your widgets (PC status, quick-launch dock, virtual folders, environment snapshot) can be
   dragged to reorder or hidden — everything on Home is *yours*.

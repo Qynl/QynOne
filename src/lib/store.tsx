@@ -2,7 +2,7 @@ import { createContext, useContext, useEffect, useMemo, useState } from "react";
 import type { ReactNode } from "react";
 import { getDesktop } from "./desktop";
 import { createSeedState } from "./seed";
-import type { AppItem, Folder, NotificationKind, Profile, QynState, Settings, Workspace } from "./types";
+import type { AppItem, CalendarEvent, Folder, NotificationKind, Profile, QynState, Settings, Workspace } from "./types";
 import { uid } from "./utils";
 
 const STORAGE_KEY = "qynone.state.v1";
@@ -58,6 +58,10 @@ export interface AppActions {
   clearNotifications: () => void;
   setNotes: (text: string) => void;
   toggleFileFavorite: (path: string) => void;
+  addEvent: (input: { title: string; date: string; start?: string; end?: string; notes?: string }) => string;
+  updateEvent: (id: string, patch: Partial<Omit<CalendarEvent, "id">>) => void;
+  removeEvent: (id: string) => void;
+  toggleEventDone: (id: string) => void;
   resetAll: () => void;
   importState: (next: QynState) => void;
 }
@@ -241,6 +245,36 @@ export function QynProvider({ children }: { children: ReactNode }) {
           fileFavorites: s.fileFavorites.includes(path)
             ? s.fileFavorites.filter((p) => p !== path)
             : [path, ...s.fileFavorites].slice(0, 20),
+        }));
+      },
+      addEvent(input) {
+        const id = uid();
+        const ev: CalendarEvent = {
+          id,
+          title: input.title.trim(),
+          date: input.date,
+          start: input.start ?? "",
+          end: input.end ?? "",
+          notes: input.notes ?? "",
+          done: false,
+          createdAt: Date.now(),
+        };
+        setState((s) => ({ ...s, events: [...s.events, ev] }));
+        return id;
+      },
+      updateEvent(id, patch) {
+        setState((s) => ({
+          ...s,
+          events: s.events.map((e) => (e.id === id ? { ...e, ...patch } : e)),
+        }));
+      },
+      removeEvent(id) {
+        setState((s) => ({ ...s, events: s.events.filter((e) => e.id !== id) }));
+      },
+      toggleEventDone(id) {
+        setState((s) => ({
+          ...s,
+          events: s.events.map((e) => (e.id === id ? { ...e, done: !e.done } : e)),
         }));
       },
       resetAll() {

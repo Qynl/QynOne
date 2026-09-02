@@ -39,5 +39,6 @@ export function createSeedState(): QynState {
     notificationsSeeded: false,
     notes: "",
     fileFavorites: [],
+    events: [],
   };
 }

@@ -7,13 +7,56 @@ import { useStats } from "./stats";
 import { useSystemInfo } from "./system";
 import { useVault } from "./vault";
 import { useLaunch } from "../components/ui";
-import { uid } from "./utils";
+import { dateKey, eventSortKey, fmtTime, parseTime, relativeDay, todayKey, uid } from "./utils";
+import { speak } from "./speech";
 
 /* ------------------------------------------------------------------ */
 /* Types                                                               */
 /* ------------------------------------------------------------------ */
 
-export type AiEmotion = "idle" | "listening" | "thinking" | "working" | "happy" | "concerned";
+export type AiEmotion =
+  | "idle"
+  | "awake"
+  | "boot"
+  | "listening"
+  | "wake"
+  | "thinking"
+  | "working"
+  | "happy"
+  | "joyful"
+  | "laugh"
+  | "love"
+  | "party"
+  | "celebrate"
+  | "excited"
+  | "proud"
+  | "grateful"
+  | "calm"
+  | "determined"
+  | "curious"
+  | "focused"
+  | "playful"
+  | "wink"
+  | "shy"
+  | "surprised"
+  | "shocked"
+  | "sad"
+  | "crying"
+  | "worried"
+  | "scared"
+  | "confused"
+  | "angry"
+  | "sleepy"
+  | "sleeping"
+  | "tired"
+  | "sick"
+  | "zoned"
+  | "searching"
+  | "offline"
+  | "yes"
+  | "no"
+  | "sorry"
+  | "concerned";
 
 export interface AiMessage {
   id: string;
@@ -102,15 +145,16 @@ function resolvedEndpoint(cfg: AiConfig): string {
 /* ------------------------------------------------------------------ */
 
 function systemPrompt(): string {
-  return `You are Qyn, the assistant built into QynOne — the user's personal command center for Windows. You have REAL access to their environment through tools: their applications, virtual folders, workspaces, live system stats, and their local Markdown vault (notes that link to each other with [[wiki links]]).
+  const now = new Date();
+  return `You are Nex, the AI built into QynOne — the user's personal command center for Windows. You speak out loud when the user talks to you by voice, so keep answers short and natural for speech. You have REAL access to their environment through tools: their applications, virtual folders, workspaces, live system stats, local Markdown vault (notes link with [[wiki links]]), and their calendar (events and to-dos).
 
 Rules:
 - Be warm, concise and human. Answer in the same language the user writes in.
-- Use tools whenever the user asks for something QynOne can do (open, launch, navigate, create a note, search notes, list things, system stats).
+- Use tools whenever the user asks for something QynOne can do (open, launch, navigate, create a note, search notes, list things, system stats, calendar).
 - After using a tool, briefly say what you did. Never invent results — report what the tool returned.
-- When the user asks about their notes, use the vault tools.
+- When the user asks about their notes, use the vault tools. When they ask about events, plans or to-dos, use the calendar tools.
 - You have no admin rights and never need them; everything is user-level.
-- Today: ${new Date().toLocaleDateString(undefined, { weekday: "long", year: "numeric", month: "long", day: "numeric" })}.`;
+- Today: ${now.toLocaleDateString(undefined, { weekday: "long", year: "numeric", month: "long", day: "numeric" })}. Current time: ${now.toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit" })}.`;
 }
 
 /* ------------------------------------------------------------------ */
@@ -189,17 +233,23 @@ async function resolveModel(cfg: AiConfig): Promise<string> {
 /* Context                                                             */
 /* ------------------------------------------------------------------ */
 
+export interface SendOptions {
+  /** spoken out loud via the voice interface */
+  voice?: boolean;
+}
+
 interface AiValue {
   messages: AiMessage[];
   busy: boolean;
   emotion: AiEmotion;
   config: AiConfig;
   tools: AiToolDef[];
-  send: (text: string) => Promise<void>;
+  send: (text: string, opts?: SendOptions) => Promise<void>;
   clearChat: () => void;
   saveConfig: (cfg: AiConfig) => Promise<void>;
   testConnection: () => Promise<{ ok: boolean; message: string; models?: string[] }>;
   setListening: (v: boolean) => void;
+  setEmotion: (e: AiEmotion, ms?: number) => void;
 }
 
 const AiContext = createContext<AiValue | null>(null);
@@ -215,7 +265,7 @@ export function AiProvider({
   onOpenFolder: (id: string) => void;
   onOpenNote: (name: string) => void;
 }) {
-  const { state } = useQyn();
+  const { state, actions } = useQyn();
   const vault = useVault();
   const launch = useLaunch();
   const stats = useStats();
@@ -225,6 +275,8 @@ export function AiProvider({
   statsRef.current = { stats, sys };
 
   const [messages, setMessages] = useState<AiMessage[]>([]);
+  const messagesRef = useRef<AiMessage[]>([]);
+  messagesRef.current = messages;
   const [busy, setBusy] = useState(false);
   const [emotion, setEmotion] = useState<AiEmotion>("idle");
   const [config, setConfig] = useState<AiConfig>({ provider: "ollama", endpoint: "", model: "", key: "" });
@@ -288,7 +340,7 @@ export function AiProvider({
         },
         run: (args) => {
           const view = String(args.view ?? "").toLowerCase();
-          const allowed = ["home", "apps", "folders", "workspaces", "system", "files", "tools", "vault", "settings", "profile"];
+          const allowed = ["home", "apps", "folders", "workspaces", "system", "files", "tools", "vault", "calendar", "settings", "profile"];
           if (!allowed.includes(view)) return `Unknown view "${view}". Allowed: ${allowed.join(", ")}.`;
           onNavigate(view);
           return `Opened ${view}.`;
@@ -466,17 +518,149 @@ export function AiProvider({
           return "Opened the vault.";
         },
       },
+      {
+        name: "calendar-add",
+        usage: "/calendar-add <title> [date] [time]",
+        description: "Add an event or to-do to the calendar. Date like YYYY-MM-DD or 'tomorrow'; time like '14:30'.",
+        parameters: {
+          type: "object",
+          properties: {
+            title: { type: "string", description: "event title" },
+            date: { type: "string", description: "optional date: YYYY-MM-DD, 'today' or 'tomorrow'" },
+            time: { type: "string", description: "optional start time HH:MM" },
+          },
+          required: ["title"],
+        },
+        run: (args) => {
+          const title = String(args.title ?? "").trim();
+          if (!title) return "An event needs a title.";
+          let day = todayKey();
+          const raw = String(args.date ?? "").trim().toLowerCase();
+          if (raw && raw !== "today") {
+            if (raw === "tomorrow") {
+              const t = new Date();
+              t.setDate(t.getDate() + 1);
+              day = dateKey(t);
+            } else if (/^\d{4}-\d{2}-\d{2}$/.test(raw)) {
+              day = raw;
+            } else {
+              return `I didn't understand the date "${raw}". Use YYYY-MM-DD, 'today' or 'tomorrow'.`;
+            }
+          }
+          const time = String(args.time ?? "").trim();
+          if (time && parseTime(time) === null) return `The time "${time}" doesn't look right — use HH:MM like 14:30.`;
+          actions.addEvent({ title, date: day, start: time });
+          return `Added "${title}"${time ? ` at ${fmtTime(time)}` : ""} on ${relativeDay(day)} (${day}).`;
+        },
+      },
+      {
+        name: "calendar-today",
+        usage: "/calendar-today",
+        description: "List today's events and to-dos.",
+        parameters: { type: "object", properties: {} },
+        run: () => {
+          const day = todayKey();
+          const list = state.events
+            .filter((e) => e.date === day)
+            .sort((a, b) => eventSortKey(a).localeCompare(eventSortKey(b)));
+          if (list.length === 0) return "Nothing scheduled today — your calendar is clear.";
+          return list
+            .map((e) => `${e.done ? "[done] " : ""}${e.start ? fmtTime(e.start) : "all day"} — ${e.title}`)
+            .join(", ");
+        },
+      },
+      {
+        name: "calendar-next",
+        usage: "/calendar-next",
+        description: "Show what's coming up next on the calendar (next few events).",
+        parameters: { type: "object", properties: {} },
+        run: () => {
+          const up = state.events
+            .filter((e) => !e.done)
+            .sort((a, b) => eventSortKey(a).localeCompare(eventSortKey(b)))
+            .filter((e) => `${e.date}T${e.start || "99:99"}` >= `${todayKey()}T00:00`)
+            .slice(0, 4);
+          if (up.length === 0) return "Nothing upcoming. Say \"add to calendar\" to plan something.";
+          return up
+            .map((e) => `${relativeDay(e.date)}${e.start ? ` ${fmtTime(e.start)}` : ""} — ${e.title}`)
+            .join(", ");
+        },
+      },
+      {
+        name: "calendar-list",
+        usage: "/calendar-list <date|this week>",
+        description: "List events for a date or this week.",
+        parameters: {
+          type: "object",
+          properties: { when: { type: "string", description: "YYYY-MM-DD or 'this week'" } },
+          required: ["when"],
+        },
+        run: (args) => {
+          const when = String(args.when ?? "").trim().toLowerCase();
+          let from = todayKey();
+          let to = todayKey();
+          if (when === "this week") {
+            const d = new Date();
+            const dow = (d.getDay() + 6) % 7; // Monday start
+            d.setDate(d.getDate() - dow);
+            from = dateKey(d);
+            d.setDate(d.getDate() + 6);
+            to = dateKey(d);
+          } else if (/^\d{4}-\d{2}-\d{2}$/.test(when)) {
+            from = when;
+            to = when;
+          } else {
+            return "Say a date like YYYY-MM-DD or 'this week'.";
+          }
+          const list = state.events
+            .filter((e) => e.date >= from && e.date <= to && !e.done)
+            .sort((a, b) => eventSortKey(a).localeCompare(eventSortKey(b)));
+          if (list.length === 0) return `Nothing scheduled ${when === "this week" ? "this week" : "on " + when}.`;
+          return list
+            .map((e) => `${relativeDay(e.date)}${e.start ? ` ${fmtTime(e.start)}` : ""} — ${e.title}`)
+            .join(", ");
+        },
+      },
+      {
+        name: "calendar-done",
+        usage: "/calendar-done <title>",
+        description: "Mark an event or to-do as done by title.",
+        parameters: {
+          type: "object",
+          properties: { query: { type: "string", description: "event title to mark done" } },
+          required: ["query"],
+        },
+        run: (args) => {
+          const q = String(args.query ?? "").toLowerCase();
+          const ev = state.events.find((e) => e.title.toLowerCase().includes(q));
+          if (!ev) return `No event matching "${args.query}".`;
+          if (ev.done) return `"${ev.title}" is already done.`;
+          actions.toggleEventDone(ev.id);
+          return `Marked "${ev.title}" as done. Nice work!`;
+        },
+      },
+      {
+        name: "open-calendar",
+        usage: "/open-calendar",
+        description: "Open the calendar view.",
+        parameters: { type: "object", properties: {} },
+        run: () => {
+          onNavigate("calendar");
+          return "Opened the calendar.";
+        },
+      },
     ];
-  }, [state, vault, launch, onNavigate, onOpenFolder, onOpenNote]);
+  }, [state, vault, launch, onNavigate, onOpenFolder, onOpenNote, actions]);
 
   /* ------------------------------------------------------------------ */
   /* Send                                                               */
   /* ------------------------------------------------------------------ */
 
   const send = useCallback(
-    async (rawText: string) => {
+    async (rawText: string, opts?: SendOptions) => {
       const text = rawText.trim();
       if (!text || busy) return;
+      const viaVoice = Boolean(opts?.voice);
 
       /* Slash commands — direct tool use. */
       const slash = text.match(/^\/([a-z-]+)\s*(.*)$/i);
@@ -515,6 +699,10 @@ export function AiProvider({
           setEmotionFor("concerned", 1800);
         } finally {
           setBusy(false);
+          if (viaVoice) {
+            const last = messagesRef.current[messagesRef.current.length - 1];
+            if (last?.role === "ai") speak(last.text);
+          }
         }
         return;
       }
@@ -587,6 +775,7 @@ export function AiProvider({
         if (!finalText.trim()) finalText = "I couldn't produce an answer.";
         push("ai", finalText.trim());
         setEmotionFor("happy", 1600);
+        if (viaVoice) speak(finalText.trim());
       } catch (e) {
         const err = e as Error;
         const isAbort = err.name === "AbortError";
@@ -604,6 +793,7 @@ export function AiProvider({
         }
         push("ai", reply);
         setEmotionFor("concerned", 2200);
+        if (viaVoice) speak(reply);
       } finally {
         window.clearTimeout(timeout);
         setBusy(false);
@@ -657,8 +847,9 @@ export function AiProvider({
       saveConfig: saveConfigCb,
       testConnection,
       setListening,
+      setEmotion: setEmotionFor,
     }),
-    [messages, busy, emotion, config, tools, send, clearChat, saveConfigCb, testConnection, setListening],
+    [messages, busy, emotion, config, tools, send, clearChat, saveConfigCb, testConnection, setListening, setEmotionFor],
   );
 
   return <AiContext.Provider value={value}>{children}</AiContext.Provider>;

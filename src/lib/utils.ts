@@ -64,3 +64,80 @@ export function clockTime(): string {
     hour12: false,
   });
 }
+
+/* ------------------------------------------------------------------ */
+/* Calendar helpers                                                    */
+/* ------------------------------------------------------------------ */
+
+/** Local YYYY-MM-DD key for a date. */
+export function dateKey(d: Date): string {
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, "0");
+  const day = String(d.getDate()).padStart(2, "0");
+  return `${y}-${m}-${day}`;
+}
+
+export function todayKey(): string {
+  return dateKey(new Date());
+}
+
+/** Parse a YYYY-MM-DD key back into a local Date at noon (tz-safe). */
+export function parseDateKey(key: string): Date {
+  const [y, m, d] = key.split("-").map(Number);
+  return new Date(y, (m ?? 1) - 1, d ?? 1, 12, 0, 0);
+}
+
+/** "09:30" -> minutes since midnight (invalid -> null). */
+export function parseTime(t: string): number | null {
+  const m = t.trim().match(/^(\d{1,2}):(\d{2})$/);
+  if (!m) return null;
+  const h = Number(m[1]);
+  const min = Number(m[2]);
+  if (h > 23 || min > 59) return null;
+  return h * 60 + min;
+}
+
+export function fmtTime(t: string): string {
+  const mins = parseTime(t);
+  if (mins === null) return t;
+  const h = Math.floor(mins / 60);
+  const m = mins % 60;
+  const ampm = h >= 12 ? "PM" : "AM";
+  const h12 = h % 12 === 0 ? 12 : h % 12;
+  return `${h12}:${String(m).padStart(2, "0")} ${ampm}`;
+}
+
+/** "Today" / "Tomorrow" / "Yesterday" / weekday / "MMM d". */
+export function relativeDay(key: string): string {
+  const d = parseDateKey(key);
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+  const diff = Math.round((d.getTime() - today.getTime()) / 86_400_000);
+  if (diff === 0) return "Today";
+  if (diff === 1) return "Tomorrow";
+  if (diff === -1) return "Yesterday";
+  if (diff > 1 && diff < 7) return d.toLocaleDateString(undefined, { weekday: "long" });
+  if (diff > -7 && diff < 0) return "Last " + d.toLocaleDateString(undefined, { weekday: "long" });
+  return d.toLocaleDateString(undefined, { month: "short", day: "numeric" });
+}
+
+/** Events that are past-due: earlier day, or earlier today and never done. */
+export function isMissed(ev: { date: string; start: string; done: boolean }): boolean {
+  if (ev.done) return false;
+  const today = todayKey();
+  if (ev.date < today) return true;
+  if (ev.date === today) {
+    const mins = parseTime(ev.start);
+    if (mins !== null) {
+      const now = new Date();
+      return now.getHours() * 60 + now.getMinutes() > mins + 5;
+    }
+    return false;
+  }
+  return false;
+}
+
+/** Sort key: date, then start time (all-day last within a day). */
+export function eventSortKey(ev: { date: string; start: string }): string {
+  return `${ev.date}T${ev.start ? ev.start.padStart(5, "0") : "99:99"}`;
+}

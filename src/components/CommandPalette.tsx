@@ -1,6 +1,7 @@
 import { motion } from "framer-motion";
 import {
   BookOpen,
+  CalendarDays,
   CornerDownLeft,
   FileSearch,
   FileText,
@@ -224,6 +225,16 @@ export function CommandPalette({
         run: () => {
           onClose();
           onNavigate("workspaces");
+        },
+      },
+      {
+        key: "act-calendar",
+        group: "Actions" as const,
+        icon: <ActionGlyph><CalendarDays size={15} /></ActionGlyph>,
+        label: "Open the calendar",
+        run: () => {
+          onClose();
+          onNavigate("calendar");
         },
       },
       {
