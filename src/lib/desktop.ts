@@ -15,6 +15,32 @@ export interface SystemInfo {
   totalMemBytes: number;
 }
 
+export interface StatsSnapshot {
+  cpuPct: number;
+  memUsedBytes: number;
+  memTotalBytes: number;
+  uptimeSec: number;
+  platform: string;
+  release: string;
+  arch: string;
+  hostname: string;
+  cpuModel: string | null;
+  cores: number;
+}
+
+export interface DirEntry {
+  name: string;
+  path: string;
+  isDir: boolean;
+  size: number;
+  mtimeMs: number;
+}
+
+export interface SearchHit {
+  name: string;
+  path: string;
+}
+
 export interface DesktopBridge {
   platform: string;
   loadState: () => Promise<QynState | null>;
@@ -22,6 +48,13 @@ export interface DesktopBridge {
   launch: (target: string) => Promise<{ ok: boolean; error?: string }>;
   findShortcuts: (query: string) => Promise<ShortcutHit[]>;
   getSystemInfo: () => Promise<SystemInfo | null>;
+  getStats: () => Promise<StatsSnapshot | null>;
+  listDir: (dir: string) => Promise<DirEntry[] | null>;
+  getHomeDir: () => Promise<string | null>;
+  openPath: (p: string) => Promise<{ ok: boolean; error?: string }>;
+  searchFiles: (query: string) => Promise<SearchHit[]>;
+  captureScreen: () => Promise<string | null>;
+  saveScreenshot: (dataUrl: string) => Promise<{ ok: boolean; path?: string; error?: string }>;
 }
 
 /** True when running inside the QynOne desktop app. */

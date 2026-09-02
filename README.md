@@ -1,25 +1,40 @@
 # QynOne
 
-**The place your PC starts.**
+**The place your PC starts. QynOne is the first thing you want to open on your PC.**
 
 QynOne is a real Windows desktop application and a virtual layer over your PC — one clean, beautiful place for the
-applications, games, projects, files and tools you use every day. It never replaces, moves, or modifies the
-applications installed on your PC. Virtual folders inside QynOne are pure QynOne metadata; the **real apps stay
-exactly where Windows installed them** and open right where they are — nothing is transferred, copied, or broken.
+applications, games, projects, files, folders, tools and information you use every day. It never replaces, moves, or
+modifies the applications installed on your PC. Virtual folders inside QynOne are pure QynOne metadata; the **real
+apps stay exactly where Windows installed them** and open right where they are — nothing is transferred, copied, or
+broken.
 
-## What's in v0.1
+> **The north star:** you open QynOne once, and you stop thinking about the Windows desktop entirely.
+> "Why would I even use the desktop anymore?"
 
-- **Launcher-style Home** — profile greeting with a live clock, one-click global search, and a quick-launch dock of
-  your pinned apps.
+## What's in QynOne 2.0
+
+- **Customizable Home** — your widgets (PC status, quick-launch dock, virtual folders, environment snapshot) can be
+  dragged to reorder or hidden — everything on Home is *yours*.
+- **Workspaces** — bundle the apps for one part of your life (Development, Gaming, School…) and **launch them all at
+  once**. QynOne remembers the setup; a workspace is pure metadata, the real apps open in place.
+- **System Center** — a beautiful replacement for Task Manager: live CPU & memory charts, stat cards, uptime, and
+  real hardware info (PC name, processor, cores, RAM) read straight from the machine at user level.
+- **File Center** — browse your real Documents, Downloads, Desktop, Pictures, Videos and Music from inside QynOne,
+  open files and folders, and star favorites for one-click access. Read-only at user level — QynOne never moves a
+  file.
+- **Quick Tools** — a working calculator, stopwatch, auto-saving notes, one-click screenshot (saved to
+  `Pictures\QynOne`), plus shortcuts that open the right Windows settings page (display, sound, network, storage…).
+- **Notification Center** — a unified bell in the top bar; workspace launches and system activity land there.
+- **Universal search (Ctrl+K)** — apps, folders, **workspaces**, **your files** (real file search on the PC) and
+  system actions. Type `volume`, `wifi`, `display`, `update`… and go straight to the right Windows settings page.
+- **Launcher Home** — profile greeting with a live clock, one-click search, and a quick-launch dock.
 - **Your profile** — name, avatar, tagline and personal stats; the Home hero greets *you* by name.
 - **Virtual folders** — organize any app into your own environment without touching Windows. Breadcrumb navigation
-  (`Home → Folder library → Games`) gets you back anywhere, and the QynOne logo always returns you home.
+  gets you back anywhere, and the QynOne logo always returns you home.
 - **Real launching** — apps and games open through Windows' normal shell; "Find on this PC…" links tiles to your
   actual Start Menu shortcuts.
-- **System panel** — real PC name, processor, and memory straight from the machine in the desktop app.
-- **Global search** — Ctrl+K is always one keystroke away.
 - **Backup & restore** — your whole environment downloads as one JSON file.
-- **Works everywhere** — desktop app, phone-width window… a mobile bottom nav keeps every screen one tap from Home.
+- **Works everywhere** — desktop app or narrow window: a scrollable mobile bottom nav keeps every screen one tap away.
 
 ## The app
 
@@ -48,9 +63,11 @@ bun run dist:win
 
 | What | Where |
 | --- | --- |
-| Your environment (virtual folders, apps, favorites, settings) | Saved automatically to `%APPDATA%\QynOne\qynone-state.json` — a plain, human-readable file on your PC. No cloud, no account. |
-| Your profile (name, avatar, tagline, stats) | The Home greeting greets *you*, your avatar follows you everywhere, and real PC info (name, CPU, RAM) comes straight from the machine. |
+| Your environment (virtual folders, apps, workspaces, favorites, notes, settings) | Saved automatically to `%APPDATA%\QynOne\qynone-state.json` — a plain, human-readable file on your PC. No cloud, no account. |
 | Launching an app or game | Through Windows' normal shell, the same way a double-click would. QynOne never executes arbitrary commands and never touches the real app files. |
+| Workspaces | Metadata only — a workspace is a list of app ids. Launching it opens each real app through Windows' shell, staggered, one by one. |
+| Live system stats | CPU %, memory, uptime, hostname, hardware — read via ordinary OS APIs at user level. QynOne never requests elevated access. |
+| File Center | Browsing is read-only (`readdir` + metadata). Opening a file/folder goes through Windows' shell like a double-click. |
 | Finding installed apps | "Find on this PC…" in the app editor reads your Start Menu shortcuts (`.lnk`/`.url`) — **read-only**. |
 | Virtual folders | Metadata only. QynOne never moves, copies, renames, or touches the real applications/folders on your PC. |
 
@@ -96,6 +113,7 @@ lives in `%APPDATA%\QynOne`. Everything else behaves identically.
 
 ## Roadmap
 
-The architecture (local-first state, virtual folders, launch targets) is built to grow into games launchers, developer
-workspaces, PC monitoring, widgets, plugins and notifications. First version ships the core: Home, virtual
-organization, real launching, and personal settings.
+The architecture is modular and built to grow: app manager, virtual library, workspace manager, universal search,
+file system integration, system monitor, notification center, widget system, settings and (later) plugins. Next up:
+Game Center (auto-detect installed games, playtime, covers), deeper PC monitoring (GPU, network, disk charts),
+clipboard & download history, and widgets that can be resized.

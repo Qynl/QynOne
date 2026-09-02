@@ -1,4 +1,4 @@
-export type ViewId = "home" | "apps" | "folders" | "settings" | "profile";
+export type ViewId = "home" | "apps" | "folders" | "workspaces" | "system" | "files" | "tools" | "settings" | "profile";
 
 export interface AppItem {
   id: string;
@@ -43,6 +43,10 @@ export interface Settings {
   clock: boolean;
   /** live battery readout in the top bar */
   battery: boolean;
+  /** Home widget order — id list, front to back */
+  homeOrder: string[];
+  /** Home widgets the user has hidden */
+  hiddenWidgets: string[];
 }
 
 export interface Profile {
@@ -54,6 +58,27 @@ export interface Profile {
   color: string;
 }
 
+export interface Workspace {
+  id: string;
+  name: string;
+  icon: string;
+  color: string;
+  /** app ids that belong to this workspace */
+  itemIds: string[];
+  createdAt: number;
+}
+
+export type NotificationKind = "info" | "success" | "warn";
+
+export interface NotificationItem {
+  id: string;
+  title: string;
+  body: string;
+  time: number;
+  kind: NotificationKind;
+  read: boolean;
+}
+
 export interface QynState {
   version: number;
   apps: AppItem[];
@@ -61,6 +86,14 @@ export interface QynState {
   recents: RecentEntry[];
   settings: Settings;
   profile: Profile;
+  workspaces: Workspace[];
+  notifications: NotificationItem[];
+  /** demo notifications are seeded once per environment */
+  notificationsSeeded: boolean;
+  /** sticky notes for the Quick Tools */
+  notes: string;
+  /** favorite file/folder paths */
+  fileFavorites: string[];
 }
 
 export interface AccentTheme {

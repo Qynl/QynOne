@@ -1,5 +1,5 @@
 import { AnimatePresence, motion } from "framer-motion";
-import { FolderOpen, Home, LayoutGrid, SlidersHorizontal, User } from "lucide-react";
+import { Activity, FolderOpen, Folder, Home, LayoutGrid, Layers, SlidersHorizontal, User, Wrench } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
 import { useEffect, useState } from "react";
 import { cn } from "./lib/utils";
@@ -12,10 +12,14 @@ import { QynProvider, useQyn } from "./lib/store";
 import { ACCENTS, WALLPAPERS } from "./lib/theme";
 import type { ViewId } from "./lib/types";
 import { AllAppsView } from "./views/AllAppsView";
+import { FileCenterView } from "./views/FileCenterView";
 import { FoldersView } from "./views/FoldersView";
 import { HomeView } from "./views/HomeView";
 import { ProfileView } from "./views/ProfileView";
+import { QuickToolsView } from "./views/QuickToolsView";
 import { SettingsView } from "./views/SettingsView";
+import { SystemCenterView } from "./views/SystemCenterView";
+import { WorkspacesView } from "./views/WorkspacesView";
 
 export default function App() {
   return (
@@ -70,6 +74,10 @@ function Shell() {
   const renderView = () => {
     if (view === "apps") return <AllAppsView />;
     if (view === "folders") return <FoldersView activeFolderId={folderId} onSelectFolder={setFolderId} onNavigate={navigate} />;
+    if (view === "workspaces") return <WorkspacesView onNavigate={navigate} />;
+    if (view === "system") return <SystemCenterView />;
+    if (view === "files") return <FileCenterView />;
+    if (view === "tools") return <QuickToolsView />;
     if (view === "settings") return <SettingsView onNavigate={navigate} />;
     if (view === "profile") return <ProfileView onNavigate={navigate} />;
     return <HomeView onNavigate={navigate} onOpenFolder={openFolder} onOpenPalette={() => setPaletteOpen(true)} />;
@@ -125,13 +133,17 @@ const MOBILE_NAV: Array<{ id: ViewId; label: string; icon: LucideIcon }> = [
   { id: "home", label: "Home", icon: Home },
   { id: "apps", label: "Apps", icon: LayoutGrid },
   { id: "folders", label: "Folders", icon: FolderOpen },
+  { id: "workspaces", label: "Workspaces", icon: Layers },
+  { id: "system", label: "System", icon: Activity },
+  { id: "files", label: "Files", icon: Folder },
+  { id: "tools", label: "Tools", icon: Wrench },
   { id: "profile", label: "You", icon: User },
   { id: "settings", label: "Settings", icon: SlidersHorizontal },
 ];
 
 function MobileNav({ view, onNavigate }: { view: ViewId; onNavigate: (v: ViewId) => void }) {
   return (
-    <nav className="glass-deep fixed inset-x-3 bottom-3 z-40 flex items-stretch justify-around rounded-2xl px-2 py-1.5 md:hidden">
+    <nav className="glass-deep no-scrollbar fixed inset-x-3 bottom-3 z-40 flex items-stretch gap-1 overflow-x-auto rounded-2xl px-2 py-1.5 md:hidden">
       {MOBILE_NAV.map((item) => {
         const active = view === item.id;
         const Icon = item.icon;
@@ -140,7 +152,7 @@ function MobileNav({ view, onNavigate }: { view: ViewId; onNavigate: (v: ViewId)
             key={item.id}
             onClick={() => onNavigate(item.id)}
             className={cn(
-              "flex min-w-[56px] flex-col items-center gap-1 rounded-xl px-3 py-1.5 transition",
+              "flex min-w-[54px] shrink-0 flex-col items-center gap-1 rounded-xl px-2.5 py-1.5 transition",
               active ? "bg-accent-soft text-accent" : "text-frost-500 hover:bg-white/5 hover:text-frost-200",
             )}
           >

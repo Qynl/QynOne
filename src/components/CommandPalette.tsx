@@ -1,21 +1,45 @@
 import { motion } from "framer-motion";
-import { FolderOpen, LayoutGrid, Plus, Search, SlidersHorizontal, User, CornerDownLeft } from "lucide-react";
+import {
+  CornerDownLeft,
+  FileSearch,
+  FolderOpen,
+  Layers,
+  LayoutGrid,
+  MonitorCog,
+  Plus,
+  Search,
+  SlidersHorizontal,
+  User,
+} from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
+import { getDesktop } from "../lib/desktop";
+import type { SearchHit } from "../lib/desktop";
 import { useQyn } from "../lib/store";
-import type { AppItem, Folder } from "../lib/types";
+import type { AppItem, Folder, ViewId } from "../lib/types";
 import { cn } from "../lib/utils";
 import { AppIcon } from "./AppIcon";
 import { useLaunch, useUi } from "./ui";
-import type { ViewId } from "../lib/types";
 
 interface Result {
   key: string;
-  group: "Applications" | "Folders" | "Actions";
+  group: "Applications" | "Folders" | "Workspaces" | "Files" | "Actions";
   icon?: React.ReactNode;
   label: string;
   hint?: string;
   run: () => void;
 }
+
+/** Windows system pages opened through the OS — shown only in the desktop app. */
+const SYSTEM_ACTIONS: Array<{ label: string; uri: string; words: string[]; hint: string }> = [
+  { label: "Open sound settings", uri: "ms-settings:sound", words: ["volume", "sound", "audio", "mixer"], hint: "volume, audio" },
+  { label: "Open display settings", uri: "ms-settings:display", words: ["display", "screen", "monitor", "resolution"], hint: "screen, resolution" },
+  { label: "Open network settings", uri: "ms-settings:network-status", words: ["wifi", "network", "internet", "ethernet"], hint: "wifi, internet" },
+  { label: "Open bluetooth settings", uri: "ms-settings:bluetooth", words: ["bluetooth", "pair"], hint: "pair devices" },
+  { label: "Open storage settings", uri: "ms-settings:storage", words: ["storage", "disk", "space"], hint: "disk space" },
+  { label: "Open Windows Update", uri: "ms-settings:windowsupdate", words: ["update", "windows update"], hint: "install updates" },
+  { label: "Open personalization", uri: "ms-settings:personalization", words: ["theme", "personalize", "wallpaper", "colors"], hint: "themes, colors" },
+  { label: "Open apps list", uri: "ms-settings:appsfeatures", words: ["uninstall", "installed apps", "apps list"], hint: "uninstall apps" },
+];
 
 export function CommandPalette({
   open,
@@ -31,14 +55,40 @@ export function CommandPalette({
   const { state } = useQyn();
   const { openAddApp, openFolderModal } = useUi();
   const launch = useLaunch();
+  const bridge = getDesktop();
   const [query, setQuery] = useState("");
   const [selected, setSelected] = useState(0);
+  const [fileHits, setFileHits] = useState<SearchHit[]>([]);
   const inputRef = useRef<HTMLInputElement>(null);
+
+  /* Debounced real file search on the desktop. */
+  useEffect(() => {
+    if (!open || !bridge) return;
+    const q = query.trim();
+    if (q.length < 2) {
+      setFileHits([]);
+      return;
+    }
+    let alive = true;
+    const t = setTimeout(() => {
+      bridge
+        .searchFiles(q)
+        .then((hits) => {
+          if (alive) setFileHits(hits);
+        })
+        .catch(() => {});
+    }, 260);
+    return () => {
+      alive = false;
+      clearTimeout(t);
+    };
+  }, [query, open, bridge]);
 
   useEffect(() => {
     if (open) {
       setQuery("");
       setSelected(0);
+      setFileHits([]);
       window.setTimeout(() => inputRef.current?.focus(), 30);
     }
   }, [open]);
@@ -81,6 +131,42 @@ export function CommandPalette({
         },
       }));
 
+    const workspaces: Result[] = state.workspaces
+      .filter((w) => match(w.name))
+      .slice(0, 4)
+      .map((w) => {
+        const count = w.itemIds.length;
+        return {
+          key: `ws-${w.id}`,
+          group: "Workspaces" as const,
+          icon: <AppIcon icon={w.icon} color={w.color} size={32} rounded="rounded-[9px]" />,
+          label: w.name,
+          hint: `Launch ${count} application${count === 1 ? "" : "s"} together`,
+          run: () => {
+            onClose();
+            const items = w.itemIds.map((id) => state.apps.find((a) => a.id === id)).filter(Boolean);
+            items.forEach((app, i) => window.setTimeout(() => launch(app!), i * 450));
+          },
+        };
+      });
+
+    const files: Result[] = fileHits
+      .filter((f) => match(f.name))
+      .slice(0, 6)
+      .map((f) => ({
+        key: `file-${f.path}`,
+        group: "Files" as const,
+        icon: <ActionGlyph><FileSearch size={14} /></ActionGlyph>,
+        label: f.name,
+        hint: f.path,
+        run: () => {
+          onClose();
+          bridge?.openPath(f.path).then((res) => {
+            if (!res.ok) console.warn(res.error);
+          });
+        },
+      }));
+
     const actions: Result[] = [
       {
         key: "act-add-app",
@@ -113,6 +199,36 @@ export function CommandPalette({
         },
       },
       {
+        key: "act-workspaces",
+        group: "Actions" as const,
+        icon: <ActionGlyph><Layers size={15} /></ActionGlyph>,
+        label: "Open workspaces",
+        run: () => {
+          onClose();
+          onNavigate("workspaces");
+        },
+      },
+      {
+        key: "act-files",
+        group: "Actions" as const,
+        icon: <ActionGlyph><FolderOpen size={15} /></ActionGlyph>,
+        label: "Open file center",
+        run: () => {
+          onClose();
+          onNavigate("files");
+        },
+      },
+      {
+        key: "act-system",
+        group: "Actions" as const,
+        icon: <ActionGlyph><MonitorCog size={15} /></ActionGlyph>,
+        label: "Open system center",
+        run: () => {
+          onClose();
+          onNavigate("system");
+        },
+      },
+      {
         key: "act-apps",
         group: "Actions" as const,
         icon: <ActionGlyph><LayoutGrid size={15} /></ActionGlyph>,
@@ -132,10 +248,28 @@ export function CommandPalette({
           onNavigate("settings");
         },
       },
-    ].filter((a) => match(a.label));
+    ]
+      .filter((a) => match(a.label))
+      .concat(
+        bridge
+          ? SYSTEM_ACTIONS.filter((s) => s.words.some((w) => w.includes(q)) && q.length > 0)
+              .slice(0, 4)
+              .map((s) => ({
+                key: `sys-${s.uri}`,
+                group: "Actions" as const,
+                icon: <ActionGlyph><MonitorCog size={15} /></ActionGlyph>,
+                label: s.label,
+                hint: s.hint,
+                run: () => {
+                  onClose();
+                  bridge.launch(s.uri);
+                },
+              }))
+          : [],
+      );
 
-    return [...actions, ...folders, ...apps];
-  }, [query, state, onClose, onNavigate, onOpenFolder, launch, openAddApp, openFolderModal]);
+    return [...actions, ...folders, ...workspaces, ...files, ...apps];
+  }, [query, fileHits, state, onClose, onNavigate, onOpenFolder, launch, openAddApp, openFolderModal, bridge]);
 
   useEffect(() => {
     setSelected((s) => Math.max(0, Math.min(s, results.length - 1)));
@@ -188,7 +322,7 @@ export function CommandPalette({
                   onClose();
                 }
               }}
-              placeholder="Search everything…"
+              placeholder="Search apps, files, folders, actions…"
               className="min-w-0 flex-1 bg-transparent text-[15px] text-frost-100 outline-none placeholder:text-frost-500/70"
             />
             <span className="kbd shrink-0">esc</span>
@@ -214,7 +348,7 @@ export function CommandPalette({
               </div>
             )}
 
-            {(["Actions", "Folders", "Applications"] as const).map((group) => {
+            {(["Actions", "Folders", "Workspaces", "Files", "Applications"] as const).map((group) => {
               const groupResults = results.filter((r) => r.group === group);
               if (groupResults.length === 0) return null;
               return (

@@ -3,6 +3,7 @@ import { useEffect, useState } from "react";
 import { useQyn } from "../lib/store";
 import { useSystemInfo } from "../lib/system";
 import { clockTime, prettyToday } from "../lib/utils";
+import { NotificationCenter } from "./NotificationCenter";
 
 export function TopBar({ onOpenPalette, onHome }: { onOpenPalette: () => void; onHome: () => void }) {
   const { state } = useQyn();
@@ -46,6 +47,7 @@ export function TopBar({ onOpenPalette, onHome }: { onOpenPalette: () => void; o
 
       {/* Right cluster */}
       <div className="flex shrink-0 items-center gap-3">
+        <NotificationCenter />
         {showBattery && (
           <div
             className={`flex items-center gap-1.5 rounded-full border px-2.5 py-1.5 text-[12px] font-medium ${

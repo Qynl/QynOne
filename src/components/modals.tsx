@@ -7,6 +7,7 @@ import type { ShortcutHit } from "../lib/desktop";
 import { ICON_CHOICES, resolveIcon } from "../lib/icons";
 import { useQyn } from "../lib/store";
 import type { IconKey } from "../lib/icons";
+import type { AppItem } from "../lib/types";
 import { cn, shade } from "../lib/utils";
 import { useUi } from "./ui";
 
@@ -553,6 +554,160 @@ export function FolderModal({ folderId, onClose }: { folderId?: string; onClose:
           </button>
           <PrimaryButton type="submit" disabled={!canSave}>
             {editing ? "Save changes" : "Create folder"}
+          </PrimaryButton>
+        </div>
+      </form>
+    </ModalShell>
+  );
+}
+
+/* ------------------------------------------------------------------ */
+/* Workspace modal — create or edit a workspace (a container of apps)  */
+/* ------------------------------------------------------------------ */
+
+export function WorkspaceModal({ workspaceId, onClose }: { workspaceId?: string; onClose: () => void }) {
+  const { state, actions } = useQyn();
+  const { toast } = useUi();
+  const editing = workspaceId ? state.workspaces.find((w) => w.id === workspaceId) : undefined;
+
+  const [name, setName] = useState(editing?.name ?? "");
+  const [icon, setIcon] = useState<IconKey>((editing?.icon as IconKey) ?? "blocks");
+  const [color, setColor] = useState(editing?.color ?? COLOR_CHOICES[1]);
+  const [itemIds, setItemIds] = useState<string[]>(editing?.itemIds ?? []);
+
+  const canSave = useMemo(() => name.trim().length > 0, [name]);
+
+  const grouped = useMemo(() => {
+    const byFolder = new Map<string | null, AppItem[]>();
+    for (const app of state.apps) {
+      const list = byFolder.get(app.folderId) ?? [];
+      list.push(app);
+      byFolder.set(app.folderId, list);
+    }
+    return [...byFolder.entries()].sort((a, b) =>
+      (state.folders.find((f) => f.id === a[0])?.name ?? "Unfiled").localeCompare(
+        state.folders.find((f) => f.id === b[0])?.name ?? "Unfiled",
+      ),
+    );
+  }, [state.apps, state.folders]);
+
+  function toggleApp(id: string) {
+    setItemIds((ids) => (ids.includes(id) ? ids.filter((x) => x !== id) : [...ids, id]));
+  }
+
+  function handleSubmit(e: FormEvent) {
+    e.preventDefault();
+    if (!canSave) return;
+    if (editing) {
+      actions.updateWorkspace(editing.id, { name: name.trim(), icon, color, itemIds });
+      toast(`Saved workspace ${name.trim()}`);
+    } else {
+      actions.addWorkspace(name.trim(), icon, color, itemIds);
+      toast(`Created workspace ${name.trim()}`);
+    }
+    onClose();
+  }
+
+  return (
+    <ModalShell
+      title={editing ? "Edit workspace" : "New workspace"}
+      subtitle="A workspace is a container of everything you need for one part of your life — launch it all at once with one click."
+      onClose={onClose}
+    >
+      <form onSubmit={handleSubmit} className="space-y-4">
+        <Field label="Name">
+          <TextInput value={name} onChange={setName} placeholder="e.g. Development, Gaming, School…" autoFocus />
+        </Field>
+
+        <Field label="Icon">
+          <div className="grid grid-cols-8 gap-1.5">
+            {["blocks", "code", "gamepad2", "bookOpen", "palette", "globe", "rocket", "music"].map((key) => {
+              const active = key === icon;
+              const Glyph = resolveIcon(key);
+              return (
+                <button
+                  key={key}
+                  type="button"
+                  onClick={() => setIcon(key as IconKey)}
+                  className={cn(
+                    "grid h-9 w-full place-items-center rounded-lg border transition",
+                    active
+                      ? "border-[color-mix(in_srgb,var(--accent)_60%,transparent)] bg-accent-soft text-frost-100"
+                      : "border-white/8 bg-white/4 text-frost-400 hover:bg-white/8 hover:text-frost-200",
+                  )}
+                >
+                  <Glyph size={16} strokeWidth={1.9} />
+                </button>
+              );
+            })}
+          </div>
+        </Field>
+
+        <Field label="Color">
+          <div className="flex flex-wrap gap-2">
+            {COLOR_CHOICES.map((c) => (
+              <button
+                key={c}
+                type="button"
+                onClick={() => setColor(c)}
+                className={cn(
+                  "relative h-7 w-7 rounded-full transition hover:scale-110",
+                  color === c && "ring-2 ring-white/80 ring-offset-2 ring-offset-[#0f1628]",
+                )}
+                style={{ background: `linear-gradient(145deg, ${c}, ${shade(c, -30)})` }}
+              >
+                {color === c && <Check size={13} className="absolute inset-0 m-auto text-white" strokeWidth={3} />}
+              </button>
+            ))}
+          </div>
+        </Field>
+
+        <Field label={`Applications in this workspace (${itemIds.length})`}>
+          <div className="accent-scroll max-h-56 space-y-2 overflow-y-auto rounded-xl border border-white/8 bg-white/3 p-2">
+            {grouped.map(([folderId, apps]) => {
+              const folderName = state.folders.find((f) => f.id === folderId)?.name ?? "Unfiled";
+              return (
+                <div key={folderId ?? "none"}>
+                  <p className="px-1.5 pb-1 pt-1 text-[10.5px] font-semibold uppercase tracking-[0.14em] text-frost-500">
+                    {folderName}
+                  </p>
+                  <div className="flex flex-wrap gap-1.5">
+                    {apps.map((app) => {
+                      const active = itemIds.includes(app.id);
+                      return (
+                        <button
+                          key={app.id}
+                          type="button"
+                          onClick={() => toggleApp(app.id)}
+                          className={cn(
+                            "inline-flex h-8 items-center gap-1.5 rounded-lg border px-2.5 text-[12.5px] transition",
+                            active
+                              ? "border-[color-mix(in_srgb,var(--accent)_60%,transparent)] bg-accent-soft text-frost-100"
+                              : "border-white/8 bg-white/4 text-frost-400 hover:bg-white/8",
+                          )}
+                        >
+                          {active && <Check size={12} className="text-accent" />}
+                          {app.name}
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        </Field>
+
+        <div className="flex items-center justify-end gap-2 pt-1">
+          <button
+            type="button"
+            onClick={onClose}
+            className="h-10 rounded-xl border border-white/10 bg-white/5 px-4 text-[13.5px] font-medium text-frost-300 transition hover:bg-white/10 hover:text-frost-100"
+          >
+            Cancel
+          </button>
+          <PrimaryButton type="submit" disabled={!canSave}>
+            {editing ? "Save changes" : "Create workspace"}
           </PrimaryButton>
         </div>
       </form>

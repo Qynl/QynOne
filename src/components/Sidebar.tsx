@@ -1,5 +1,5 @@
 import { motion } from "framer-motion";
-import { ChevronRight, FolderOpen, Home, LayoutGrid, Plus, SlidersHorizontal, Sparkles } from "lucide-react";
+import { Activity, ChevronRight, FolderOpen, Folder, Home, LayoutGrid, Layers, Plus, SlidersHorizontal, Sparkles, Wrench } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
 import { useQyn } from "../lib/store";
 import type { ViewId } from "../lib/types";
@@ -11,6 +11,13 @@ const NAV: Array<{ id: ViewId; label: string; icon: LucideIcon }> = [
   { id: "home", label: "Home", icon: Home },
   { id: "apps", label: "All applications", icon: LayoutGrid },
   { id: "folders", label: "Folder library", icon: FolderOpen },
+];
+
+const CENTER_NAV: Array<{ id: ViewId; label: string; icon: LucideIcon }> = [
+  { id: "workspaces", label: "Workspaces", icon: Layers },
+  { id: "system", label: "System center", icon: Activity },
+  { id: "files", label: "File center", icon: Folder },
+  { id: "tools", label: "Quick tools", icon: Wrench },
   { id: "settings", label: "Settings", icon: SlidersHorizontal },
 ];
 
@@ -85,31 +92,19 @@ export function Sidebar({
 
         {/* Nav */}
         <nav className="mt-4 flex-1 space-y-0.5 overflow-y-auto px-3">
-          {NAV.map((item) => {
-            const active = view === item.id;
-            const Icon = item.icon;
-            return (
-              <button
-                key={item.id}
-                onClick={() => onNavigate(item.id)}
-                className={cn(
-                  "group relative flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-[13.5px] font-medium transition-all duration-150",
-                  active
-                    ? "bg-accent-soft text-frost-100 shadow-[0_0_0_1px_color-mix(in_srgb,var(--accent)_22%,transparent)_inset]"
-                    : "text-frost-400 hover:bg-white/5 hover:text-frost-200",
-                )}
-              >
-                {active && (
-                  <motion.span
-                    layoutId="nav-active"
-                    className="absolute -left-3 top-1/2 h-5 w-[3px] -translate-y-1/2 rounded-full bg-[var(--accent)]"
-                  />
-                )}
-                <Icon size={16} strokeWidth={active ? 2.2 : 1.8} className={active ? "text-accent" : "text-frost-500 group-hover:text-frost-300"} />
-                {item.label}
-              </button>
-            );
-          })}
+          {NAV.map((item) => (
+            <NavButton key={item.id} item={item} view={view} onNavigate={onNavigate} />
+          ))}
+
+          {/* Command center */}
+          <div className="px-1 pb-1 pt-6">
+            <p className="text-[10.5px] font-semibold uppercase tracking-[0.16em] text-frost-500">
+              Command center
+            </p>
+          </div>
+          {CENTER_NAV.map((item) => (
+            <NavButton key={item.id} item={item} view={view} onNavigate={onNavigate} />
+          ))}
 
           {/* Quick folders */}
           <div className="px-1 pb-1 pt-6">
@@ -135,9 +130,12 @@ export function Sidebar({
           ))}
         </nav>
 
-        {/* System mini panel */}
+        {/* System mini panel — opens the system center */}
         <div className="p-3">
-          <div className="glass-soft rounded-xl p-3">
+          <button
+            onClick={() => onNavigate("system")}
+            className="glass-soft block w-full rounded-xl p-3 text-left transition hover:border-[color-mix(in_srgb,var(--accent)_35%,transparent)] hover:bg-white/6"
+          >
             <div className="flex items-center gap-2">
               <span className="relative flex h-2 w-2">
                 <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-emerald-400/60" />
@@ -155,9 +153,46 @@ export function Sidebar({
                 style={{ width: `${sys.load}%`, opacity: 0.75 }}
               />
             </div>
-          </div>
+          </button>
         </div>
       </div>
     </aside>
+  );
+}
+
+/* ------------------------------------------------------------------ */
+/* Single nav item                                                     */
+/* ------------------------------------------------------------------ */
+
+function NavButton({
+  item,
+  view,
+  onNavigate,
+}: {
+  item: { id: ViewId; label: string; icon: LucideIcon };
+  view: ViewId;
+  onNavigate: (v: ViewId) => void;
+}) {
+  const active = view === item.id;
+  const Icon = item.icon;
+  return (
+    <button
+      onClick={() => onNavigate(item.id)}
+      className={cn(
+        "group relative flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-[13.5px] font-medium transition-all duration-150",
+        active
+          ? "bg-accent-soft text-frost-100 shadow-[0_0_0_1px_color-mix(in_srgb,var(--accent)_22%,transparent)_inset]"
+          : "text-frost-400 hover:bg-white/5 hover:text-frost-200",
+      )}
+    >
+      {active && (
+        <motion.span
+          layoutId="nav-active"
+          className="absolute -left-3 top-1/2 h-5 w-[3px] -translate-y-1/2 rounded-full bg-[var(--accent)]"
+        />
+      )}
+      <Icon size={16} strokeWidth={active ? 2.2 : 1.8} className={active ? "text-accent" : "text-frost-500 group-hover:text-frost-300"} />
+      {item.label}
+    </button>
   );
 }

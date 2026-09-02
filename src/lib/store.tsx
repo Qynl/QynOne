@@ -2,7 +2,7 @@ import { createContext, useContext, useEffect, useMemo, useState } from "react";
 import type { ReactNode } from "react";
 import { getDesktop } from "./desktop";
 import { createSeedState } from "./seed";
-import type { AppItem, Folder, Profile, QynState, Settings } from "./types";
+import type { AppItem, Folder, NotificationItem, NotificationKind, Profile, QynState, Settings, Workspace } from "./types";
 import { uid } from "./utils";
 
 const STORAGE_KEY = "qynone.state.v1";
@@ -50,6 +50,14 @@ export interface AppActions {
   clearRecents: () => void;
   patchSettings: (patch: Partial<Settings>) => void;
   updateProfile: (patch: Partial<Profile>) => void;
+  addWorkspace: (name: string, icon: string, color: string, itemIds: string[]) => string;
+  updateWorkspace: (id: string, patch: Partial<Omit<Workspace, "id">>) => void;
+  removeWorkspace: (id: string) => void;
+  pushNotification: (title: string, body: string, kind?: NotificationKind) => void;
+  markNotificationsRead: () => void;
+  clearNotifications: () => void;
+  setNotes: (text: string) => void;
+  toggleFileFavorite: (path: string) => void;
   resetAll: () => void;
   importState: (next: QynState) => void;
 }
@@ -61,8 +69,43 @@ interface StoreValue {
 
 const QynContext = createContext<StoreValue | null>(null);
 
+const SEED_NOTIFICATIONS: NotificationItem[] = [
+  {
+    id: "seed-wu",
+    title: "Windows Update available",
+    body: "An optional quality update is ready. You decide when to install it.",
+    time: Date.now() - 4 * 36e5,
+    kind: "warn",
+    read: false,
+  },
+  {
+    id: "seed-gpu",
+    title: "GPU driver update available",
+    body: "A newer graphics driver is available for your hardware.",
+    time: Date.now() - 26 * 36e5,
+    kind: "info",
+    read: false,
+  },
+  {
+    id: "seed-hello",
+    title: "QynOne is ready",
+    body: "Welcome. Pin your most-used apps to the Quick launch dock and set up your profile.",
+    time: Date.now() - 2 * 864e5,
+    kind: "success",
+    read: false,
+  },
+];
+
+const MAX_NOTIFICATIONS = 30;
+
 export function QynProvider({ children }: { children: ReactNode }) {
   const [state, setState] = useState<QynState>(loadState);
+
+  /* Seed the demo notification center once per environment. */
+  useEffect(() => {
+    if (state.notificationsSeeded) return;
+    setState((s) => ({ ...s, notifications: SEED_NOTIFICATIONS, notificationsSeeded: true }));
+  }, [state.notificationsSeeded]);
 
   /* Desktop app: adopt the state saved on the user's PC (appears on mount). */
   useEffect(() => {
@@ -189,6 +232,49 @@ export function QynProvider({ children }: { children: ReactNode }) {
       },
       updateProfile(patch) {
         setState((s) => ({ ...s, profile: { ...s.profile, ...patch } }));
+      },
+      addWorkspace(name, icon, color, itemIds) {
+        const id = uid();
+        setState((s) => ({
+          ...s,
+          workspaces: [...s.workspaces, { id, name, icon, color, itemIds, createdAt: Date.now() }],
+        }));
+        return id;
+      },
+      updateWorkspace(id, patch) {
+        setState((s) => ({
+          ...s,
+          workspaces: s.workspaces.map((w) => (w.id === id ? { ...w, ...patch } : w)),
+        }));
+      },
+      removeWorkspace(id) {
+        setState((s) => ({ ...s, workspaces: s.workspaces.filter((w) => w.id !== id) }));
+      },
+      pushNotification(title, body, kind = "info") {
+        setState((s) => ({
+          ...s,
+          notifications: [{ id: uid(), title, body, time: Date.now(), kind, read: false }, ...s.notifications].slice(0, MAX_NOTIFICATIONS),
+        }));
+      },
+      markNotificationsRead() {
+        setState((s) => ({
+          ...s,
+          notifications: s.notifications.map((n) => ({ ...n, read: true })),
+        }));
+      },
+      clearNotifications() {
+        setState((s) => ({ ...s, notifications: [] }));
+      },
+      setNotes(text) {
+        setState((s) => ({ ...s, notes: text }));
+      },
+      toggleFileFavorite(path) {
+        setState((s) => ({
+          ...s,
+          fileFavorites: s.fileFavorites.includes(path)
+            ? s.fileFavorites.filter((p) => p !== path)
+            : [path, ...s.fileFavorites].slice(0, 20),
+        }));
       },
       resetAll() {
         setState(createSeedState());

@@ -7,7 +7,7 @@ import type { AppItem } from "../lib/types";
 import { uid } from "../lib/utils";
 import { useQyn } from "../lib/store";
 import { cn, initials, shade } from "../lib/utils";
-import { AppModal, FolderModal } from "./modals";
+import { AppModal, FolderModal, WorkspaceModal } from "./modals";
 
 /* ------------------------------------------------------------------ */
 /* Toasts + launch helper                                              */
@@ -24,6 +24,7 @@ interface UiApi {
   openAddApp: (folderId?: string | null) => void;
   openEditApp: (appId: string) => void;
   openFolderModal: (folderId?: string) => void;
+  openWorkspaceModal: (workspaceId?: string) => void;
 }
 
 const UiContext = createContext<UiApi | null>(null);
@@ -40,6 +41,7 @@ export function UiProvider({ children }: { children: ReactNode }) {
     | { kind: "add-app"; folderId: string | null }
     | { kind: "edit-app"; appId: string }
     | { kind: "folder"; folderId?: string }
+    | { kind: "workspace"; workspaceId?: string }
     | null
   >(null);
   const timers = useRef<Map<string, ReturnType<typeof setTimeout>>>(new Map());
@@ -75,6 +77,7 @@ export function UiProvider({ children }: { children: ReactNode }) {
       openAddApp: (folderId: string | null = null) => setModal({ kind: "add-app", folderId }),
       openEditApp: (appId: string) => setModal({ kind: "edit-app", appId }),
       openFolderModal: (folderId?: string) => setModal({ kind: "folder", folderId }),
+      openWorkspaceModal: (workspaceId?: string) => setModal({ kind: "workspace", workspaceId }),
     }),
     [toast],
   );
@@ -125,6 +128,12 @@ export function UiProvider({ children }: { children: ReactNode }) {
         {modal &&
           (modal.kind === "folder" ? (
             <FolderModal key="folder-modal" folderId={modal.folderId} onClose={() => setModal(null)} />
+          ) : modal.kind === "workspace" ? (
+            <WorkspaceModal
+              key="workspace-modal"
+              workspaceId={modal.workspaceId}
+              onClose={() => setModal(null)}
+            />
           ) : (
             <AppModal
               key="app-modal"

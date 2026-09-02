@@ -1,4 +1,5 @@
-import type { AppItem, Folder, Profile, QynState, RecentEntry } from "./types";
+import type { AppItem, Folder, Profile, QynState, RecentEntry, Workspace } from "./types";
+import { DEFAULT_HOME_ORDER } from "./widgets";
 
 const now = Date.now();
 
@@ -61,12 +62,25 @@ export const SEED_RECENTS: RecentEntry[] = [
   { appId: "figma", lastOpened: now - 3 * 864e5, count: 12 },
 ];
 
+export const SEED_WORKSPACES: Workspace[] = [
+  {
+    id: "ws-dev",
+    name: "Development",
+    icon: "code",
+    color: "#4ac9c2",
+    itemIds: ["vscode", "terminal", "unreal", "node"],
+    createdAt: now - 21 * 864e5,
+  },
+];
+
 export const DEFAULT_SETTINGS = {
   accent: "azure" as const,
   wallpaper: "abyss" as const,
   motion: true,
   clock: true,
   battery: true,
+  homeOrder: DEFAULT_HOME_ORDER,
+  hiddenWidgets: [] as string[],
 };
 
 export const DEFAULT_PROFILE: Profile = {
@@ -83,5 +97,10 @@ export function createSeedState(): QynState {
     recents: SEED_RECENTS,
     settings: DEFAULT_SETTINGS,
     profile: DEFAULT_PROFILE,
+    workspaces: SEED_WORKSPACES,
+    notifications: [],
+    notificationsSeeded: false,
+    notes: "",
+    fileFavorites: [],
   };
 }
