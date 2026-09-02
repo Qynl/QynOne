@@ -308,6 +308,181 @@ async function openPath(p) {
 }
 
 /* ------------------------------------------------------------------ */
+/* Markdown Vault — a real folder of .md files on the user's PC.       */
+/* The files themselves are the source of truth; QynOne only reads     */
+/* and writes them (user-level, no admin).                             */
+/* ------------------------------------------------------------------ */
+
+function vaultRoot() {
+  return path.join(app.getPath("documents"), "QynOneVault");
+}
+
+/** Ensure a relative vault path stays inside the vault root. */
+function vaultSafe(rel) {
+  if (typeof rel !== "string" || !rel.trim()) return null;
+  const root = path.resolve(vaultRoot());
+  const full = path.resolve(root, rel);
+  if (full !== root && !full.startsWith(root + path.sep)) return null;
+  return full;
+}
+
+async function ensureVault() {
+  await fsPromises.mkdir(vaultRoot(), { recursive: true });
+}
+
+function walkVault(dir, rel, folders, notes, depth) {
+  if (depth > 10) return;
+  let entries;
+  try {
+    entries = fs.readdirSync(dir, { withFileTypes: true });
+  } catch {
+    return;
+  }
+  for (const entry of entries) {
+    if (entry.name.startsWith(".")) continue;
+    const full = path.join(dir, entry.name);
+    const relPath = rel ? `${rel}/${entry.name}` : entry.name;
+    try {
+      if (entry.isDirectory()) {
+        folders.push(relPath);
+        walkVault(full, relPath, folders, notes, depth + 1);
+      } else if (entry.isFile() && entry.name.toLowerCase().endsWith(".md")) {
+        const content = fs.readFileSync(full, "utf8");
+        notes.push({ path: relPath, name: entry.name.slice(0, -3), folder: rel ? rel : "", content });
+      }
+    } catch {
+      // skip unreadable entries
+    }
+  }
+}
+
+async function readVaultTree() {
+  await ensureVault();
+  const folders = [];
+  const notes = [];
+  walkVault(vaultRoot(), "", folders, notes, 0);
+  folders.sort((a, b) => a.localeCompare(b));
+  return { folders, notes };
+}
+
+ipcMain.handle("qyn:vault-root", async () => {
+  await ensureVault();
+  return vaultRoot();
+});
+
+ipcMain.handle("qyn:vault-tree", () => readVaultTree());
+
+ipcMain.handle("qyn:vault-read", async (_event, rel) => {
+  const full = vaultSafe(rel);
+  if (!full) return null;
+  try {
+    return await fsPromises.readFile(full, "utf8");
+  } catch {
+    return null;
+  }
+});
+
+ipcMain.handle("qyn:vault-write", async (_event, rel, content) => {
+  const full = vaultSafe(rel);
+  if (!full || typeof content !== "string") return { ok: false, error: "invalid path or content" };
+  if (!full.toLowerCase().endsWith(".md")) return { ok: false, error: "only .md files can be written" };
+  try {
+    await fsPromises.mkdir(path.dirname(full), { recursive: true });
+    await fsPromises.writeFile(full, content, "utf8");
+    return { ok: true };
+  } catch (e) {
+    return { ok: false, error: String((e && e.message) || e) };
+  }
+});
+
+ipcMain.handle("qyn:vault-rename", async (_event, oldRel, newRel) => {
+  const oldFull = vaultSafe(oldRel);
+  const newFull = vaultSafe(newRel);
+  if (!oldFull || !newFull) return { ok: false, error: "invalid path" };
+  try {
+    await fsPromises.mkdir(path.dirname(newFull), { recursive: true });
+    await fsPromises.rename(oldFull, newFull);
+    return { ok: true };
+  } catch (e) {
+    return { ok: false, error: String((e && e.message) || e) };
+  }
+});
+
+ipcMain.handle("qyn:vault-delete", async (_event, rel) => {
+  const full = vaultSafe(rel);
+  if (!full) return { ok: false, error: "invalid path" };
+  try {
+    await fsPromises.rm(full, { recursive: true });
+    return { ok: true };
+  } catch (e) {
+    return { ok: false, error: String((e && e.message) || e) };
+  }
+});
+
+ipcMain.handle("qyn:vault-mkdir", async (_event, rel) => {
+  const full = vaultSafe(rel);
+  if (!full) return { ok: false, error: "invalid path" };
+  try {
+    await fsPromises.mkdir(full, { recursive: true });
+    return { ok: true };
+  } catch (e) {
+    return { ok: false, error: String((e && e.message) || e) };
+  }
+});
+
+/* ------------------------------------------------------------------ */
+/* AI configuration — stored as a plain .env file in the user data     */
+/* folder ( %APPDATA%\QynOne\qynone.env ). The API key never leaves    */
+/* the user's PC and is never logged.                                  */
+/* ------------------------------------------------------------------ */
+
+function aiConfigFile() {
+  return path.join(app.getPath("userData"), "qynone.env");
+}
+
+function parseEnvFile(raw) {
+  const out = {};
+  for (const line of String(raw).split(/\r?\n/)) {
+    const m = line.match(/^\s*([A-Za-z0-9_]+)\s*=\s*(.*)\s*$/);
+    if (m) out[m[1]] = m[2];
+  }
+  return out;
+}
+
+ipcMain.handle("qyn:ai-config-get", async () => {
+  try {
+    const raw = await fsPromises.readFile(aiConfigFile(), "utf8");
+    const env = parseEnvFile(raw);
+    return {
+      provider: env.QYNONE_AI_PROVIDER || "ollama",
+      endpoint: env.QYNONE_AI_ENDPOINT || "",
+      model: env.QYNONE_AI_MODEL || "",
+      key: env.QYNONE_AI_KEY || "",
+    };
+  } catch {
+    return null;
+  }
+});
+
+ipcMain.handle("qyn:ai-config-set", async (_event, cfg) => {
+  try {
+    const c = cfg && typeof cfg === "object" ? cfg : {};
+    const lines = [
+      `QYNONE_AI_PROVIDER=${String(c.provider || "ollama").replace(/[^a-z0-9_-]/gi, "")}`,
+      `QYNONE_AI_ENDPOINT=${String(c.endpoint || "")}`,
+      `QYNONE_AI_MODEL=${String(c.model || "")}`,
+      `QYNONE_AI_KEY=${String(c.key || "")}`,
+    ];
+    const file = aiConfigFile();
+    await fsPromises.mkdir(path.dirname(file), { recursive: true });
+    await fsPromises.writeFile(file, lines.join("\n") + "\n", "utf8");
+    return { ok: true };
+  } catch (e) {
+    return { ok: false, error: String((e && e.message) || e) };
+  }
+});
+
+/* ------------------------------------------------------------------ */
 /* Screenshot — save a captured PNG into Pictures/QynOne              */
 /* ------------------------------------------------------------------ */
 

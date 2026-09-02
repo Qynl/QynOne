@@ -12,8 +12,9 @@ import {
   Upload,
   User,
 } from "lucide-react";
-import { useRef } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Avatar, SectionHeader, Toggle, useUi } from "../components/ui";
+import { listOllamaModels, PROVIDERS, useAi } from "../lib/ai";
 import { isDesktop } from "../lib/desktop";
 import { useQyn } from "../lib/store";
 import { ACCENT_LIST, WALLPAPER_LIST } from "../lib/theme";
@@ -200,6 +201,9 @@ export function SettingsView({ onNavigate }: { onNavigate: (v: ViewId) => void }
             </div>
           </section>
 
+          {/* ---- AI assistant ---- */}
+          <AiSettingsSection />
+
           {/* ---- Data ---- */}
           <section className="glass rounded-2xl p-5">
             <SectionHeader title="Data & privacy" icon={<Database size={13} className="text-accent" />} />
@@ -307,5 +311,179 @@ function SettingRow({
       </div>
       {children}
     </div>
+  );
+}
+
+/* ------------------------------------------------------------------ */
+/* AI assistant settings — real model, configured by the user          */
+/* ------------------------------------------------------------------ */
+
+function AiSettingsSection() {
+  const { config, saveConfig, testConnection } = useAi();
+  const [test, setTest] = useState<{ ok: boolean; message: string; models?: string[] } | null>(null);
+  const [testing, setTesting] = useState(false);
+  const [models, setModels] = useState<string[]>([]);
+  const [showKey, setShowKey] = useState(false);
+
+  useEffect(() => {
+    if (config.provider === "ollama") {
+      listOllamaModels(config.endpoint || PROVIDERS.ollama.endpoint)
+        .then(setModels)
+        .catch(() => setModels([]));
+    } else {
+      setModels([]);
+    }
+  }, [config.provider, config.endpoint]);
+
+  async function runTest() {
+    setTesting(true);
+    setTest(null);
+    const res = await testConnection();
+    setTest(res);
+    setTesting(false);
+    if (res.models) setModels(res.models);
+  }
+
+  return (
+    <section className="glass rounded-2xl p-5">
+      <SectionHeader title="AI assistant" icon={<Sparkles size={13} className="text-accent" />} />
+      <p className="text-[12.5px] leading-relaxed text-frost-500">
+        Qyn, the face on your Home screen, is powered by a <span className="text-frost-300">real language model</span>.
+        Connect it to a model you already run — Ollama on this PC, OpenAI, or any OpenAI-compatible endpoint — and it
+        can open apps, manage the vault and read your system. No fake assistant, ever.
+      </p>
+
+      {/* Provider */}
+      <p className="mt-4 text-[12.5px] font-medium text-frost-400">Provider</p>
+      <div className="mt-2 grid grid-cols-3 gap-2">
+        {(Object.keys(PROVIDERS) as Array<keyof typeof PROVIDERS>).map((id) => {
+          const active = config.provider === id;
+          return (
+            <button
+              key={id}
+              onClick={() => {
+                void saveConfig({
+                  ...config,
+                  provider: id,
+                  endpoint: config.endpoint || PROVIDERS[id].endpoint,
+                  model: config.model || PROVIDERS[id].model,
+                });
+              }}
+              className={cn(
+                "rounded-xl border px-3 py-2.5 text-left transition",
+                active
+                  ? "border-[color-mix(in_srgb,var(--accent)_55%,transparent)] bg-accent-soft"
+                  : "border-white/8 bg-white/4 hover:bg-white/8",
+              )}
+            >
+              <p className={cn("text-[12.5px] font-semibold", active ? "text-frost-100" : "text-frost-300")}>
+                {PROVIDERS[id].label}
+              </p>
+              <p className="mt-0.5 text-[10.5px] leading-snug text-frost-500">
+                {id === "ollama" ? "Local · free · private" : id === "openai" ? "Cloud · needs API key" : "Your own endpoint"}
+              </p>
+            </button>
+          );
+        })}
+      </div>
+
+      {/* Endpoint */}
+      <div className="mt-4 space-y-3">
+        <div>
+          <p className="mb-1.5 text-[12px] font-medium tracking-wide text-frost-300">Endpoint</p>
+          <input
+            value={config.endpoint}
+            onChange={(e) => void saveConfig({ ...config, endpoint: e.target.value })}
+            placeholder={PROVIDERS[config.provider]?.endpoint || "https://…/v1"}
+            className="h-10 w-full rounded-xl border border-white/10 bg-white/5 px-3.5 font-mono text-[12.5px] text-frost-100 outline-none transition placeholder:text-frost-500/70 focus:border-[color-mix(in_srgb,var(--accent)_55%,transparent)]"
+          />
+        </div>
+
+        <div>
+          <div className="mb-1.5 flex items-center justify-between">
+            <p className="text-[12px] font-medium tracking-wide text-frost-300">Model</p>
+            {config.provider === "ollama" && (
+              <button
+                onClick={() =>
+                  listOllamaModels(config.endpoint || PROVIDERS.ollama.endpoint)
+                    .then(setModels)
+                    .catch(() => setModels([]))
+                }
+                className="text-[11px] font-medium text-frost-500 transition hover:text-accent"
+              >
+                Refresh list
+              </button>
+            )}
+          </div>
+          <input
+            value={config.model}
+            onChange={(e) => void saveConfig({ ...config, model: e.target.value })}
+            placeholder={config.provider === "ollama" ? "e.g. llama3.2 (auto-pick first if empty)" : PROVIDERS[config.provider]?.model || "model id"}
+            className="h-10 w-full rounded-xl border border-white/10 bg-white/5 px-3.5 font-mono text-[12.5px] text-frost-100 outline-none transition placeholder:text-frost-500/70 focus:border-[color-mix(in_srgb,var(--accent)_55%,transparent)]"
+          />
+          {config.provider === "ollama" && models.length > 0 && (
+            <div className="mt-2 flex flex-wrap gap-1.5">
+              {models.slice(0, 8).map((m) => (
+                <button
+                  key={m}
+                  onClick={() => void saveConfig({ ...config, model: m })}
+                  className={cn(
+                    "rounded-md border px-2 py-0.5 text-[11px] font-medium transition",
+                    config.model === m
+                      ? "border-[color-mix(in_srgb,var(--accent)_55%,transparent)] bg-accent-soft text-accent"
+                      : "border-white/8 bg-white/4 text-frost-400 hover:bg-white/8",
+                  )}
+                >
+                  {m}
+                </button>
+              ))}
+            </div>
+          )}
+        </div>
+
+        {(config.provider === "openai" || config.provider === "custom") && (
+          <div>
+            <p className="mb-1.5 text-[12px] font-medium tracking-wide text-frost-300">API key</p>
+            <div className="flex gap-2">
+              <input
+                type={showKey ? "text" : "password"}
+                value={config.key}
+                onChange={(e) => void saveConfig({ ...config, key: e.target.value })}
+                placeholder="sk-…"
+                className="h-10 w-full rounded-xl border border-white/10 bg-white/5 px-3.5 font-mono text-[12.5px] text-frost-100 outline-none transition placeholder:text-frost-500/70 focus:border-[color-mix(in_srgb,var(--accent)_55%,transparent)]"
+              />
+              <button
+                onClick={() => setShowKey((v) => !v)}
+                className="h-10 shrink-0 rounded-xl border border-white/10 bg-white/5 px-3 text-[11.5px] font-medium text-frost-400 transition hover:bg-white/10 hover:text-frost-200"
+              >
+                {showKey ? "Hide" : "Show"}
+              </button>
+            </div>
+          </div>
+        )}
+      </div>
+
+      {/* Test */}
+      <div className="mt-4 flex items-center gap-3">
+        <button
+          onClick={runTest}
+          disabled={testing}
+          className="inline-flex h-9 items-center gap-2 rounded-xl bg-[var(--accent)] px-4 text-[12.5px] font-semibold text-white shadow-[0_8px_20px_-8px_var(--accent-glow)] transition hover:brightness-110 active:scale-[0.98] disabled:opacity-50"
+        >
+          <Sparkles size={13} /> {testing ? "Testing…" : "Test connection"}
+        </button>
+        {test && (
+          <p className={cn("min-w-0 flex-1 text-[12px] leading-relaxed", test.ok ? "text-emerald-300" : "text-rose-300")}>
+            {test.message}
+          </p>
+        )}
+      </div>
+
+      <p className="mt-4 border-t border-white/6 pt-3 text-[11px] leading-relaxed text-frost-500">
+        {isDesktop()
+          ? "Saved locally in your user data folder (qynone.env, next to qynone-state.json). The API key never leaves this PC and is never logged."
+          : "Saved in this browser for the preview. In the desktop app the same settings live in qynone.env on your PC. Note: in the web preview, a localhost Ollama instance can't be reached — use OpenAI or a public endpoint here."}
+      </p>
+    </section>
   );
 }

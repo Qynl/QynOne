@@ -1,5 +1,5 @@
 import { motion } from "framer-motion";
-import { Activity, ChevronRight, FolderOpen, Folder, Home, LayoutGrid, Layers, Plus, SlidersHorizontal, Sparkles, Wrench } from "lucide-react";
+import { Activity, BookOpen, ChevronRight, FolderOpen, Folder, Home, LayoutGrid, Layers, Plus, SlidersHorizontal, Sparkles, Wrench } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
 import { useQyn } from "../lib/store";
 import type { ViewId } from "../lib/types";
@@ -15,6 +15,7 @@ const NAV: Array<{ id: ViewId; label: string; icon: LucideIcon }> = [
 
 const CENTER_NAV: Array<{ id: ViewId; label: string; icon: LucideIcon }> = [
   { id: "workspaces", label: "Workspaces", icon: Layers },
+  { id: "vault", label: "Vault & graph", icon: BookOpen },
   { id: "system", label: "System center", icon: Activity },
   { id: "files", label: "File center", icon: Folder },
   { id: "tools", label: "Quick tools", icon: Wrench },

@@ -1,7 +1,9 @@
 import { motion } from "framer-motion";
 import {
+  BookOpen,
   CornerDownLeft,
   FileSearch,
+  FileText,
   FolderOpen,
   Layers,
   LayoutGrid,
@@ -16,13 +18,14 @@ import { getDesktop } from "../lib/desktop";
 import type { SearchHit } from "../lib/desktop";
 import { useQyn } from "../lib/store";
 import type { AppItem, Folder, ViewId } from "../lib/types";
+import { useVault } from "../lib/vault";
 import { cn } from "../lib/utils";
 import { AppIcon } from "./AppIcon";
 import { useLaunch, useUi } from "./ui";
 
 interface Result {
   key: string;
-  group: "Applications" | "Folders" | "Workspaces" | "Files" | "Actions";
+  group: "Applications" | "Folders" | "Workspaces" | "Notes" | "Files" | "Actions";
   icon?: React.ReactNode;
   label: string;
   hint?: string;
@@ -46,13 +49,16 @@ export function CommandPalette({
   onClose,
   onNavigate,
   onOpenFolder,
+  onOpenNote,
 }: {
   open: boolean;
   onClose: () => void;
   onNavigate: (v: ViewId) => void;
   onOpenFolder: (folderId: string) => void;
+  onOpenNote: (name: string) => void;
 }) {
   const { state } = useQyn();
+  const vault = useVault();
   const { openAddApp, openFolderModal } = useUi();
   const launch = useLaunch();
   const bridge = getDesktop();
@@ -167,6 +173,18 @@ export function CommandPalette({
         },
       }));
 
+    const notes: Result[] = (q.length >= 2 ? vault.searchNotes(q).slice(0, 6) : []).map((n) => ({
+      key: `note-${n.id}`,
+      group: "Notes" as const,
+      icon: <ActionGlyph><FileText size={14} /></ActionGlyph>,
+      label: n.name,
+      hint: `${n.folder || "vault root"}${n.tags.length ? ` · ${n.tags.map((t) => `#${t}`).join(" ")}` : ""}`,
+      run: () => {
+        onClose();
+        onOpenNote(n.name);
+      },
+    }));
+
     const actions: Result[] = [
       {
         key: "act-add-app",
@@ -229,6 +247,16 @@ export function CommandPalette({
         },
       },
       {
+        key: "act-vault",
+        group: "Actions" as const,
+        icon: <ActionGlyph><BookOpen size={15} /></ActionGlyph>,
+        label: "Open the vault & graph",
+        run: () => {
+          onClose();
+          onNavigate("vault");
+        },
+      },
+      {
         key: "act-apps",
         group: "Actions" as const,
         icon: <ActionGlyph><LayoutGrid size={15} /></ActionGlyph>,
@@ -268,8 +296,8 @@ export function CommandPalette({
           : [],
       );
 
-    return [...actions, ...folders, ...workspaces, ...files, ...apps];
-  }, [query, fileHits, state, onClose, onNavigate, onOpenFolder, launch, openAddApp, openFolderModal, bridge]);
+    return [...actions, ...folders, ...workspaces, ...notes, ...files, ...apps];
+  }, [query, fileHits, state, vault, onClose, onNavigate, onOpenFolder, onOpenNote, launch, openAddApp, openFolderModal, bridge]);
 
   useEffect(() => {
     setSelected((s) => Math.max(0, Math.min(s, results.length - 1)));
@@ -348,7 +376,7 @@ export function CommandPalette({
               </div>
             )}
 
-            {(["Actions", "Folders", "Workspaces", "Files", "Applications"] as const).map((group) => {
+            {(["Actions", "Folders", "Workspaces", "Notes", "Files", "Applications"] as const).map((group) => {
               const groupResults = results.filter((r) => r.group === group);
               if (groupResults.length === 0) return null;
               return (

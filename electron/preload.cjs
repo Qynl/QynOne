@@ -3,7 +3,8 @@
  *
  * The renderer stays fully sandboxed (contextIsolation on, nodeIntegration
  * off). It can only ask for narrow, user-level operations: state, launching,
- * system stats, file browsing/search, and screenshots.
+ * system stats, file browsing/search, screenshots, the Markdown vault, and
+ * the AI configuration file.
  */
 
 const { contextBridge, ipcRenderer, desktopCapturer } = require("electron");
@@ -15,8 +16,9 @@ contextBridge.exposeInMainWorld("qynDesktop", {
   launch: (target) => ipcRenderer.invoke("qyn:launch", target),
   findShortcuts: (query) => ipcRenderer.invoke("qyn:find-shortcuts", query),
   getSystemInfo: () => ipcRenderer.invoke("qyn:system-info"),
-  getStats: () => ipcRenderer.invoke("qyn:stats"),    listDir: (dir) => ipcRenderer.invoke("qyn:list-dir", dir),
-    getHomeDir: () => ipcRenderer.invoke("qyn:home-dir"),
+  getStats: () => ipcRenderer.invoke("qyn:stats"),
+  listDir: (dir) => ipcRenderer.invoke("qyn:list-dir", dir),
+  getHomeDir: () => ipcRenderer.invoke("qyn:home-dir"),
   openPath: (p) => ipcRenderer.invoke("qyn:open-path", p),
   searchFiles: (query) => ipcRenderer.invoke("qyn:search-files", query),
   saveScreenshot: (dataUrl) => ipcRenderer.invoke("qyn:save-screenshot", dataUrl),
@@ -31,4 +33,17 @@ contextBridge.exposeInMainWorld("qynDesktop", {
       return null;
     }
   },
+
+  /* Markdown vault — real .md files under Documents\QynOneVault */
+  vaultRoot: () => ipcRenderer.invoke("qyn:vault-root"),
+  vaultTree: () => ipcRenderer.invoke("qyn:vault-tree"),
+  vaultRead: (rel) => ipcRenderer.invoke("qyn:vault-read", rel),
+  vaultWrite: (rel, content) => ipcRenderer.invoke("qyn:vault-write", rel, content),
+  vaultRename: (oldRel, newRel) => ipcRenderer.invoke("qyn:vault-rename", oldRel, newRel),
+  vaultDelete: (rel) => ipcRenderer.invoke("qyn:vault-delete", rel),
+  vaultMkdir: (rel) => ipcRenderer.invoke("qyn:vault-mkdir", rel),
+
+  /* AI configuration — qynone.env in the user data folder */
+  aiConfigGet: () => ipcRenderer.invoke("qyn:ai-config-get"),
+  aiConfigSet: (cfg) => ipcRenderer.invoke("qyn:ai-config-set", cfg),
 });

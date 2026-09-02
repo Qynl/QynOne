@@ -2,7 +2,7 @@ import { createContext, useContext, useEffect, useMemo, useState } from "react";
 import type { ReactNode } from "react";
 import { getDesktop } from "./desktop";
 import { createSeedState } from "./seed";
-import type { AppItem, Folder, NotificationItem, NotificationKind, Profile, QynState, Settings, Workspace } from "./types";
+import type { AppItem, Folder, NotificationKind, Profile, QynState, Settings, Workspace } from "./types";
 import { uid } from "./utils";
 
 const STORAGE_KEY = "qynone.state.v1";
@@ -69,43 +69,10 @@ interface StoreValue {
 
 const QynContext = createContext<StoreValue | null>(null);
 
-const SEED_NOTIFICATIONS: NotificationItem[] = [
-  {
-    id: "seed-wu",
-    title: "Windows Update available",
-    body: "An optional quality update is ready. You decide when to install it.",
-    time: Date.now() - 4 * 36e5,
-    kind: "warn",
-    read: false,
-  },
-  {
-    id: "seed-gpu",
-    title: "GPU driver update available",
-    body: "A newer graphics driver is available for your hardware.",
-    time: Date.now() - 26 * 36e5,
-    kind: "info",
-    read: false,
-  },
-  {
-    id: "seed-hello",
-    title: "QynOne is ready",
-    body: "Welcome. Pin your most-used apps to the Quick launch dock and set up your profile.",
-    time: Date.now() - 2 * 864e5,
-    kind: "success",
-    read: false,
-  },
-];
-
 const MAX_NOTIFICATIONS = 30;
 
 export function QynProvider({ children }: { children: ReactNode }) {
   const [state, setState] = useState<QynState>(loadState);
-
-  /* Seed the demo notification center once per environment. */
-  useEffect(() => {
-    if (state.notificationsSeeded) return;
-    setState((s) => ({ ...s, notifications: SEED_NOTIFICATIONS, notificationsSeeded: true }));
-  }, [state.notificationsSeeded]);
 
   /* Desktop app: adopt the state saved on the user's PC (appears on mount). */
   useEffect(() => {

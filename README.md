@@ -13,6 +13,25 @@ broken.
 
 ## What's in QynOne 2.0
 
+- **Qyn — a real AI assistant with a face.** Two rectangular eyes on your Home screen that express what it's doing
+  (listening, thinking, working, happy…). Qyn has *real tools* with real access to QynOne: it can open your apps and
+  folders, launch workspaces, read your PC stats, search the vault, create and open notes. Type `/` in the chat to
+  see its tools and use them directly.
+- **Real models only.** Qyn is powered by an actual language model you choose — **Ollama (local, free, private)**,
+  **OpenAI**, or any OpenAI-compatible endpoint — configured in **Settings → AI** and saved locally to
+  `qynone.env` on your PC. No fake assistant, no canned replies: if no model is configured, Qyn says so and points
+  you to Settings.
+- **Markdown Vault + Knowledge Graph** — a real Obsidian-style vault. On the desktop app the vault is a normal
+  folder of `.md` files (`Documents\QynOneVault`); QynOne reads and writes them directly — **the files are the
+  source of truth**, portable and human-readable.
+  - Notes link to each other with `[[Wiki Links]]`; **backlinks** and **orphan notes** are computed automatically.
+  - The **knowledge graph** is generated from the actual `[[links]]` in your files — never hardcoded. It supports
+    force-directed layout, zoom, pan, node dragging, hover highlighting, and filtering by folder, tag or orphans.
+    Clicking a node opens the note; adding, renaming or deleting notes updates the graph instantly.
+  - Markdown editing with a live preview, tags (`#project`), full vault search, folders, and unresolved-link
+    creation.
+- **Redesigned Home** — a darker, cleaner command center. The AI face and chat are the centerpiece, with compact
+  PC-status, quick-launch, folders, knowledge and workspace cards around it.
 - **Customizable Home** — your widgets (PC status, quick-launch dock, virtual folders, environment snapshot) can be
   dragged to reorder or hidden — everything on Home is *yours*.
 - **Workspaces** — bundle the apps for one part of your life (Development, Gaming, School…) and **launch them all at
@@ -24,10 +43,10 @@ broken.
   file.
 - **Quick Tools** — a working calculator, stopwatch, auto-saving notes, one-click screenshot (saved to
   `Pictures\QynOne`), plus shortcuts that open the right Windows settings page (display, sound, network, storage…).
-- **Notification Center** — a unified bell in the top bar; workspace launches and system activity land there.
-- **Universal search (Ctrl+K)** — apps, folders, **workspaces**, **your files** (real file search on the PC) and
-  system actions. Type `volume`, `wifi`, `display`, `update`… and go straight to the right Windows settings page.
-- **Launcher Home** — profile greeting with a live clock, one-click search, and a quick-launch dock.
+- **Notification Center** — a unified bell in the top bar; workspace launches and real activity land there.
+- **Universal search (Ctrl+K)** — apps, folders, **workspaces**, **vault notes**, **your files** (real file search
+  on the PC) and system actions. Type `volume`, `wifi`, `display`, `update`… and go straight to the right Windows
+  settings page.
 - **Your profile** — name, avatar, tagline and personal stats; the Home hero greets *you* by name.
 - **Virtual folders** — organize any app into your own environment without touching Windows. Breadcrumb navigation
   gets you back anywhere, and the QynOne logo always returns you home.
@@ -63,7 +82,9 @@ bun run dist:win
 
 | What | Where |
 | --- | --- |
-| Your environment (virtual folders, apps, workspaces, favorites, notes, settings) | Saved automatically to `%APPDATA%\QynOne\qynone-state.json` — a plain, human-readable file on your PC. No cloud, no account. |
+| Your environment (virtual folders, apps, workspaces, favorites, settings) | Saved automatically to `%APPDATA%\QynOne\qynone-state.json` — a plain, human-readable file on your PC. No cloud, no account. |
+| AI settings (provider, endpoint, model, API key) | Saved to `%APPDATA%\QynOne\qynone.env` — a plain `.env` file on your PC. The key never leaves the machine and is never logged. |
+| Markdown Vault | A real folder — `Documents\QynOneVault` — of `.md` files. QynOne reads and writes the files directly; they are the source of truth and work in any Markdown editor. |
 | Launching an app or game | Through Windows' normal shell, the same way a double-click would. QynOne never executes arbitrary commands and never touches the real app files. |
 | Workspaces | Metadata only — a workspace is a list of app ids. Launching it opens each real app through Windows' shell, staggered, one by one. |
 | Live system stats | CPU %, memory, uptime, hostname, hardware — read via ordinary OS APIs at user level. QynOne never requests elevated access. |
@@ -93,10 +114,29 @@ QynOne links to the actual Start Menu shortcut and Windows starts the program.
 > Note: the current builds are unsigned, so Windows SmartScreen will show a "more info" prompt the first time —
 > click "Run anyway"; it's normal for unsigned apps. Code signing can be added when you have a certificate.
 
+### The AI assistant (Settings → AI)
+
+Qyn speaks to a real model through one OpenAI-compatible client:
+
+1. **Ollama (recommended, local & free)** — install [Ollama](https://ollama.com), run `ollama pull llama3.2` (or any
+   model), and Qyn finds it at `http://localhost:11434/v1` automatically. Everything runs on your PC; nothing
+   leaves it.
+2. **OpenAI** — paste your API key (stored in `qynone.env` on your PC).
+3. **Custom** — any OpenAI-compatible endpoint (Groq, OpenRouter, LM Studio, a LAN server…) with its own base URL,
+   model and optional key.
+
+Type `/` in the chat to list Qyn's tools (`/launch minecraft`, `/create-note Ideas - "Procedural World"`,
+`/search-notes unreal`, `/system`, `/open-vault`…). The model also calls tools on its own when it decides it needs
+one — full access to QynOne, user-level only.
+
+> In the web preview, a `localhost` Ollama instance can't be reached (the preview runs in the cloud) — use OpenAI or
+> a public endpoint there. In the installed app, Ollama works out of the box.
+
 ### Backup
 
 Settings → **Backup & restore** downloads your entire environment as `qynone-backup.json`. Restore it anytime here or
-on another PC — it's how you carry your setup to a new machine.
+on another PC — it's how you carry your setup to a new machine. The vault is real files, so backing it up is just
+copying `Documents\QynOneVault`.
 
 ## Developing
 

@@ -41,6 +41,23 @@ export interface SearchHit {
   path: string;
 }
 
+export interface VaultFile {
+  /** relative path, e.g. "Projects/OUTBOUND.md" */
+  path: string;
+  /** file name without the .md extension */
+  name: string;
+  /** folder relative path ("" for the vault root) */
+  folder: string;
+  content: string;
+}
+
+export interface AiConfig {
+  provider: string;
+  endpoint: string;
+  model: string;
+  key: string;
+}
+
 export interface DesktopBridge {
   platform: string;
   loadState: () => Promise<QynState | null>;
@@ -55,6 +72,19 @@ export interface DesktopBridge {
   searchFiles: (query: string) => Promise<SearchHit[]>;
   captureScreen: () => Promise<string | null>;
   saveScreenshot: (dataUrl: string) => Promise<{ ok: boolean; path?: string; error?: string }>;
+
+  /* Markdown vault — real .md files under Documents\QynOneVault */
+  vaultRoot: () => Promise<string | null>;
+  vaultTree: () => Promise<{ folders: string[]; notes: VaultFile[] } | null>;
+  vaultRead: (rel: string) => Promise<string | null>;
+  vaultWrite: (rel: string, content: string) => Promise<{ ok: boolean; error?: string }>;
+  vaultRename: (oldRel: string, newRel: string) => Promise<{ ok: boolean; error?: string }>;
+  vaultDelete: (rel: string) => Promise<{ ok: boolean; error?: string }>;
+  vaultMkdir: (rel: string) => Promise<{ ok: boolean; error?: string }>;
+
+  /* AI configuration — qynone.env in the user data folder */
+  aiConfigGet: () => Promise<AiConfig | null>;
+  aiConfigSet: (cfg: AiConfig) => Promise<{ ok: boolean; error?: string }>;
 }
 
 /** True when running inside the QynOne desktop app. */

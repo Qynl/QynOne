@@ -1,4 +1,4 @@
-export type ViewId = "home" | "apps" | "folders" | "workspaces" | "system" | "files" | "tools" | "settings" | "profile";
+export type ViewId = "home" | "apps" | "folders" | "workspaces" | "system" | "files" | "tools" | "vault" | "settings" | "profile";
 
 export interface AppItem {
   id: string;

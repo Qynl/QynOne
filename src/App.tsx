@@ -1,5 +1,16 @@
 import { AnimatePresence, motion } from "framer-motion";
-import { Activity, FolderOpen, Folder, Home, LayoutGrid, Layers, SlidersHorizontal, User, Wrench } from "lucide-react";
+import {
+  Activity,
+  BookOpen,
+  FolderOpen,
+  Folder,
+  Home,
+  LayoutGrid,
+  Layers,
+  SlidersHorizontal,
+  User,
+  Wrench,
+} from "lucide-react";
 import type { LucideIcon } from "lucide-react";
 import { useEffect, useState } from "react";
 import { cn } from "./lib/utils";
@@ -8,9 +19,11 @@ import { CommandPalette } from "./components/CommandPalette";
 import { Sidebar } from "./components/Sidebar";
 import { TopBar } from "./components/TopBar";
 import { UiProvider } from "./components/ui";
+import { AiProvider } from "./lib/ai";
 import { QynProvider, useQyn } from "./lib/store";
 import { ACCENTS, WALLPAPERS } from "./lib/theme";
 import type { ViewId } from "./lib/types";
+import { VaultProvider } from "./lib/vault";
 import { AllAppsView } from "./views/AllAppsView";
 import { FileCenterView } from "./views/FileCenterView";
 import { FoldersView } from "./views/FoldersView";
@@ -19,13 +32,16 @@ import { ProfileView } from "./views/ProfileView";
 import { QuickToolsView } from "./views/QuickToolsView";
 import { SettingsView } from "./views/SettingsView";
 import { SystemCenterView } from "./views/SystemCenterView";
+import { VaultView } from "./views/VaultView";
 import { WorkspacesView } from "./views/WorkspacesView";
 
 export default function App() {
   return (
     <QynProvider>
       <UiProvider>
-        <Shell />
+        <VaultProvider>
+          <Shell />
+        </VaultProvider>
       </UiProvider>
     </QynProvider>
   );
@@ -35,6 +51,7 @@ function Shell() {
   const { state } = useQyn();
   const [view, setView] = useState<ViewId>("home");
   const [folderId, setFolderId] = useState<string | null>(null);
+  const [vaultOpen, setVaultOpen] = useState<string | null>(null);
   const [paletteOpen, setPaletteOpen] = useState(false);
 
   /* Apply accent + wallpaper tokens to the document root. */
@@ -71,6 +88,11 @@ function Shell() {
     setView("folders");
   };
 
+  const openVaultNote = (name: string) => {
+    setVaultOpen(name);
+    setView("vault");
+  };
+
   const renderView = () => {
     if (view === "apps") return <AllAppsView />;
     if (view === "folders") return <FoldersView activeFolderId={folderId} onSelectFolder={setFolderId} onNavigate={navigate} />;
@@ -78,50 +100,61 @@ function Shell() {
     if (view === "system") return <SystemCenterView />;
     if (view === "files") return <FileCenterView />;
     if (view === "tools") return <QuickToolsView />;
+    if (view === "vault") return <VaultView pendingOpen={vaultOpen} onConsumed={() => setVaultOpen(null)} />;
     if (view === "settings") return <SettingsView onNavigate={navigate} />;
     if (view === "profile") return <ProfileView onNavigate={navigate} />;
-    return <HomeView onNavigate={navigate} onOpenFolder={openFolder} onOpenPalette={() => setPaletteOpen(true)} />;
+    return (
+      <HomeView
+        onNavigate={navigate}
+        onOpenFolder={openFolder}
+        onOpenPalette={() => setPaletteOpen(true)}
+        onOpenNote={openVaultNote}
+      />
+    );
   };
 
   return (
-    <div className="relative flex h-full flex-col overflow-hidden">
-      <Backdrop />
+    <AiProvider onNavigate={(v) => navigate(v as ViewId)} onOpenFolder={openFolder} onOpenNote={openVaultNote}>
+      <div className="relative flex h-full flex-col overflow-hidden">
+        <Backdrop />
 
-      <div className="relative z-10 flex h-full min-h-0 flex-col">
-        <TopBar onOpenPalette={() => setPaletteOpen(true)} onHome={() => navigate("home")} />
+        <div className="relative z-10 flex h-full min-h-0 flex-col">
+          <TopBar onOpenPalette={() => setPaletteOpen(true)} onHome={() => navigate("home")} />
 
-        <div className="flex min-h-0 flex-1">
-          <Sidebar view={view} onNavigate={navigate} onOpenFolder={openFolder} />
+          <div className="flex min-h-0 flex-1">
+            <Sidebar view={view} onNavigate={navigate} onOpenFolder={openFolder} />
 
-          {/* Views transition softly between each other */}
-          <AnimatePresence mode="wait" initial={false}>
-            <motion.div
-              key={`${view}-${view === "folders" ? (folderId ?? "all") : "view"}`}
-              exit={{ opacity: 0, y: -8 }}
-              transition={{ duration: 0.16, ease: [0.22, 1, 0.36, 1] }}
-              className="accent-scroll min-w-0 flex-1 overflow-y-auto pb-24 md:pb-0"
-            >
-              {renderView()}
-            </motion.div>
-          </AnimatePresence>
+            {/* Views transition softly between each other */}
+            <AnimatePresence mode="wait" initial={false}>
+              <motion.div
+                key={`${view}-${view === "folders" ? (folderId ?? "all") : view === "vault" ? (vaultOpen ?? "none") : "view"}`}
+                exit={{ opacity: 0, y: -8 }}
+                transition={{ duration: 0.16, ease: [0.22, 1, 0.36, 1] }}
+                className="accent-scroll min-w-0 flex-1 overflow-y-auto pb-24 md:pb-0"
+              >
+                {renderView()}
+              </motion.div>
+            </AnimatePresence>
+          </div>
         </div>
+
+        {/* Mobile bottom navigation — always get back to main */}
+        <MobileNav view={view} onNavigate={navigate} />
+
+        {/* Search overlay */}
+        <AnimatePresence>
+          {paletteOpen && (
+            <CommandPalette
+              open={paletteOpen}
+              onClose={() => setPaletteOpen(false)}
+              onNavigate={navigate}
+              onOpenFolder={openFolder}
+              onOpenNote={openVaultNote}
+            />
+          )}
+        </AnimatePresence>
       </div>
-
-      {/* Mobile bottom navigation — always get back to main */}
-      <MobileNav view={view} onNavigate={navigate} />
-
-      {/* Search overlay */}
-      <AnimatePresence>
-        {paletteOpen && (
-          <CommandPalette
-            open={paletteOpen}
-            onClose={() => setPaletteOpen(false)}
-            onNavigate={navigate}
-            onOpenFolder={openFolder}
-          />
-        )}
-      </AnimatePresence>
-    </div>
+    </AiProvider>
   );
 }
 
@@ -134,6 +167,7 @@ const MOBILE_NAV: Array<{ id: ViewId; label: string; icon: LucideIcon }> = [
   { id: "apps", label: "Apps", icon: LayoutGrid },
   { id: "folders", label: "Folders", icon: FolderOpen },
   { id: "workspaces", label: "Workspaces", icon: Layers },
+  { id: "vault", label: "Vault", icon: BookOpen },
   { id: "system", label: "System", icon: Activity },
   { id: "files", label: "Files", icon: Folder },
   { id: "tools", label: "Tools", icon: Wrench },
