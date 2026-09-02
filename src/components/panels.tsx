@@ -23,35 +23,46 @@ export function SystemPanel() {
   return (
     <section className="glass rounded-2xl p-4">
       <SectionHeader title="System" />
-      <div className="space-y-2.5">
-        <Row icon={<Monitor size={14} />} label="OS" value={sys.os} />
-        {sys.hostname && <Row icon={<Server size={14} />} label="PC" value={sys.hostname} />}
-        <Row icon={<MemoryStick size={14} />} label="Memory" value={`${sys.memoryGb} GB`} />
-        <Row
-          icon={<Cpu size={14} />}
-          label="Processor"
-          value={`${sys.cpuModel ?? `${sys.cores} cores`}`}
-          bar={sys.load}
-        />
-        {pct !== null && (
+      {!sys.hostname && !sys.battery && !sys.cpuModel ? (
+        <div className="rounded-xl border border-dashed border-white/10 bg-white/3 px-3 py-4 text-center">
+          <Monitor size={16} className="mx-auto text-frost-500/60" />
+          <p className="mt-2 text-[12px] font-medium text-frost-400">No live data here</p>
+          <p className="mt-0.5 text-[11px] leading-relaxed text-frost-500">
+            This panel reads the real machine in the installed QynOne app.
+          </p>
+        </div>
+      ) : (
+        <div className="space-y-2.5">
+          <Row icon={<Monitor size={14} />} label="OS" value={sys.os} />
+          {sys.hostname && <Row icon={<Server size={14} />} label="PC" value={sys.hostname} />}
+          {sys.memoryGb !== null && <Row icon={<MemoryStick size={14} />} label="Memory" value={`${sys.memoryGb} GB`} />}
+          {sys.cpuModel && (
+            <Row
+              icon={<Cpu size={14} />}
+              label="Processor"
+              value={sys.cpuModel}
+            />
+          )}
+          {pct !== null && (
+            <Row
+              icon={<BatteryCharging size={14} />}
+              label="Battery"
+              value={sys.battery?.charging ? `${pct}% · charging` : `${pct}%`}
+              bar={pct}
+              barClass={
+                pct <= 20
+                  ? "bg-rose-400"
+                  : "bg-[linear-gradient(90deg,var(--accent),#7ce0c9)]"
+              }
+            />
+          )}
           <Row
-            icon={<BatteryCharging size={14} />}
-            label="Battery"
-            value={sys.battery?.charging ? `${pct}% · charging` : `${pct}%`}
-            bar={pct}
-            barClass={
-              pct <= 20
-                ? "bg-rose-400"
-                : "bg-[linear-gradient(90deg,var(--accent),#7ce0c9)]"
-            }
+            icon={<Radio size={14} />}
+            label="Network"
+            value={sys.online ? `Online${sys.netType ? ` · ${sys.netType.toUpperCase()}` : ""}` : "Offline"}
           />
-        )}
-        <Row
-          icon={<Radio size={14} />}
-          label="Network"
-          value={sys.online ? `Online${sys.netType ? ` · ${sys.netType.toUpperCase()}` : ""}` : "Offline"}
-        />
-      </div>
+        </div>
+      )}
     </section>
   );
 }

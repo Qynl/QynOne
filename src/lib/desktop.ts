@@ -81,6 +81,8 @@ export interface DesktopBridge {
   vaultRename: (oldRel: string, newRel: string) => Promise<{ ok: boolean; error?: string }>;
   vaultDelete: (rel: string) => Promise<{ ok: boolean; error?: string }>;
   vaultMkdir: (rel: string) => Promise<{ ok: boolean; error?: string }>;
+  /** Subscribe to vault folder changes (auto-rescan). Returns an unsubscribe fn. */
+  onVaultChanged: (cb: () => void) => () => void;
 
   /* AI configuration — qynone.env in the user data folder */
   aiConfigGet: () => Promise<AiConfig | null>;

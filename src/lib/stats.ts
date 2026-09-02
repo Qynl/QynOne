@@ -2,30 +2,15 @@ import { useEffect, useState } from "react";
 import { getDesktop } from "./desktop";
 import type { StatsSnapshot } from "./desktop";
 
-const SIM_RAM_GB = 16;
-const SIM_MEM_BYTES = SIM_RAM_GB * 2 ** 30;
-
-function simulate(): StatsSnapshot {
-  return {
-    cpuPct: 10 + Math.round(Math.random() * 26),
-    memUsedBytes: Math.round((0.42 + Math.random() * 0.16) * SIM_MEM_BYTES),
-    memTotalBytes: SIM_MEM_BYTES,
-    uptimeSec: 38 * 60 * 60 + Math.round(Math.random() * 600),
-    platform: "web",
-    release: "",
-    arch: "preview",
-    hostname: "web-preview",
-    cpuModel: null,
-    cores: 8,
-  };
-}
-
 /**
- * Real CPU/RAM/uptime from the desktop app (polled via IPC), with a gentle
- * simulation in the web preview so the interface always feels alive.
+ * Real CPU/RAM/uptime readings from the desktop app (polled via IPC).
+ *
+ * In the web preview there is no access to the OS, so this returns `null` —
+ * nothing is simulated or fabricated. Views that want live data show an
+ * honest "available in the desktop app" state instead.
  */
-export function useStats(): StatsSnapshot {
-  const [stats, setStats] = useState<StatsSnapshot>(simulate);
+export function useStats(): StatsSnapshot | null {
+  const [stats, setStats] = useState<StatsSnapshot | null>(null);
 
   useEffect(() => {
     const bridge = getDesktop();

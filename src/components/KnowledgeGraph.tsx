@@ -1,13 +1,18 @@
 import { motion } from "framer-motion";
-import { RefreshCcw, X } from "lucide-react";
+import { Folder, Layers, RefreshCcw, Search, X } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import type { GraphEdge, VaultNote } from "../lib/vault";
+import type { GraphNode, KnowledgeEdge } from "../lib/graph";
 import { cn } from "../lib/utils";
+import { AppIcon } from "./AppIcon";
 
 interface Props {
-  notes: VaultNote[];
-  edges: GraphEdge[];
+  nodes: GraphNode[];
+  edges: KnowledgeEdge[];
   onOpenNote: (name: string) => void;
+  onLaunchApp: (appId: string) => void;
+  onOpenFolder: (folderId: string) => void;
+  onOpenWorkspace: (wsId: string) => void;
+  onOpenPath: (path: string) => void;
   onClose: () => void;
 }
 
@@ -15,6 +20,16 @@ interface Point {
   x: number;
   y: number;
 }
+
+type TypeFilter = "note" | "app" | "folder" | "workspace" | "file" | "all";
+
+const TYPE_LABEL: Record<Exclude<TypeFilter, "all">, string> = {
+  note: "Notes",
+  app: "Apps",
+  folder: "Folders",
+  workspace: "Workspaces",
+  file: "Files",
+};
 
 /* ------------------------------------------------------------------ */
 /* Force simulation                                                    */
@@ -31,11 +46,10 @@ function initialPositions(ids: string[]): Map<string, Point> {
   return map;
 }
 
-function stepSim(pos: Map<string, Point>, ids: string[], edges: GraphEdge[]): boolean {
+function stepSim(pos: Map<string, Point>, ids: string[], edges: KnowledgeEdge[]): boolean {
   const vel = new Map<string, Point>();
   for (const id of ids) vel.set(id, { x: 0, y: 0 });
 
-  /* repulsion */
   for (let i = 0; i < ids.length; i++) {
     for (let j = i + 1; j < ids.length; j++) {
       const a = pos.get(ids[i])!;
@@ -49,7 +63,7 @@ function stepSim(pos: Map<string, Point>, ids: string[], edges: GraphEdge[]): bo
         d2 = dx * dx + dy * dy;
       }
       const d = Math.sqrt(d2);
-      const f = 1400 / d2; // repulsion falls off with distance²
+      const f = 1400 / d2;
       const fx = (dx / d) * f;
       const fy = (dy / d) * f;
       vel.get(ids[i])!.x += fx;
@@ -59,7 +73,6 @@ function stepSim(pos: Map<string, Point>, ids: string[], edges: GraphEdge[]): bo
     }
   }
 
-  /* springs along real links */
   for (const e of edges) {
     const a = pos.get(e.source);
     const b = pos.get(e.target);
@@ -76,7 +89,6 @@ function stepSim(pos: Map<string, Point>, ids: string[], edges: GraphEdge[]): bo
     vel.get(e.target)!.y -= fy;
   }
 
-  /* centering + integration */
   let speed = 0;
   for (const id of ids) {
     const p = pos.get(id)!;
@@ -96,9 +108,11 @@ function stepSim(pos: Map<string, Point>, ids: string[], edges: GraphEdge[]): bo
 /* Component                                                           */
 /* ------------------------------------------------------------------ */
 
-export function KnowledgeGraph({ notes, edges, onOpenNote, onClose }: Props) {
+export function KnowledgeGraph({ nodes, edges, onOpenNote, onLaunchApp, onOpenFolder, onOpenWorkspace, onOpenPath, onClose }: Props) {
   const [folderFilter, setFolderFilter] = useState<string[]>([]);
   const [tagFilter, setTagFilter] = useState<string[]>([]);
+  const [typeFilter, setTypeFilter] = useState<TypeFilter>("all");
+  const [query, setQuery] = useState("");
   const [showOrphans, setShowOrphans] = useState(true);
   const [hovered, setHovered] = useState<string | null>(null);
   const [pos, setPos] = useState<Map<string, Point>>(new Map());
@@ -112,9 +126,12 @@ export function KnowledgeGraph({ notes, edges, onOpenNote, onClose }: Props) {
 
   /* ---- filtered data ---- */
   const filtered = useMemo(() => {
-    const visible = notes.filter((n) => {
-      if (folderFilter.length > 0 && !folderFilter.includes(n.folder)) return false;
-      if (tagFilter.length > 0 && !tagFilter.some((t) => n.tags.includes(t))) return false;
+    const q = query.trim().toLowerCase();
+    const visible = nodes.filter((n) => {
+      if (folderFilter.length > 0 && n.type === "note" && !folderFilter.includes(n.folder ?? "")) return false;
+      if (tagFilter.length > 0 && n.type === "note" && !tagFilter.some((t) => n.tags?.includes(t))) return false;
+      if (typeFilter !== "all" && n.type !== typeFilter) return false;
+      if (q && !(n.label.toLowerCase().includes(q) || n.sub?.toLowerCase().includes(q))) return false;
       return true;
     });
     const visibleIds = new Set(visible.map((n) => n.id));
@@ -128,7 +145,7 @@ export function KnowledgeGraph({ notes, edges, onOpenNote, onClose }: Props) {
     const finalIds = new Set(final.map((n) => n.id));
     const finalEdges = visibleEdges.filter((e) => finalIds.has(e.source) && finalIds.has(e.target));
     return { nodes: final, edges: finalEdges, connected };
-  }, [notes, edges, folderFilter, tagFilter, showOrphans]);
+  }, [nodes, edges, folderFilter, tagFilter, typeFilter, query, showOrphans]);
 
   const adj = useMemo(() => {
     const map = new Map<string, string[]>();
@@ -159,7 +176,7 @@ export function KnowledgeGraph({ notes, edges, onOpenNote, onClose }: Props) {
       }
     };
     requestAnimationFrame(tick);
-  }, [filtered, adj]);
+  }, [filtered]);
 
   useEffect(() => {
     reheat();
@@ -170,10 +187,7 @@ export function KnowledgeGraph({ notes, edges, onOpenNote, onClose }: Props) {
     (cx: number, cy: number) => {
       const rect = svgRef.current?.getBoundingClientRect();
       if (!rect) return { x: 0, y: 0 };
-      return {
-        x: (cx - rect.left - view.x) / view.s,
-        y: (cy - rect.top - view.y) / view.s,
-      };
+      return { x: (cx - rect.left - view.x) / view.s, y: (cy - rect.top - view.y) / view.s };
     },
     [view],
   );
@@ -206,10 +220,8 @@ export function KnowledgeGraph({ notes, edges, onOpenNote, onClose }: Props) {
       if (!p) return;
       const w = screenToWorld(e.clientX, e.clientY);
       const start = screenToWorld(d.sx, d.sy);
-      const nx = d.vx + (w.x - start.x);
-      const ny = d.vy + (w.y - start.y);
       const next = new Map(posRef.current);
-      next.set(d.id, { x: nx, y: ny });
+      next.set(d.id, { x: d.vx + (w.x - start.x), y: d.vy + (w.y - start.y) });
       setPos(next);
     }
   }
@@ -217,10 +229,29 @@ export function KnowledgeGraph({ notes, edges, onOpenNote, onClose }: Props) {
   function onPointerUp() {
     const d = drag.current;
     drag.current = null;
-    /* click on a node = open the note */
     if (d?.kind === "node" && !d.moved && d.id) {
-      const note = filtered.nodes.find((n) => n.id === d.id);
-      if (note) onOpenNote(note.name);
+      const node = filtered.nodes.find((n) => n.id === d.id);
+      if (node) handleClick(node);
+    }
+  }
+
+  function handleClick(node: GraphNode) {
+    switch (node.type) {
+      case "note":
+        onOpenNote(node.refId);
+        break;
+      case "app":
+        onLaunchApp(node.refId);
+        break;
+      case "folder":
+        onOpenFolder(node.refId);
+        break;
+      case "workspace":
+        onOpenWorkspace(node.refId);
+        break;
+      case "file":
+        onOpenPath(node.refId);
+        break;
     }
   }
 
@@ -237,7 +268,6 @@ export function KnowledgeGraph({ notes, edges, onOpenNote, onClose }: Props) {
     });
   }
 
-  /* ---- highlight set ---- */
   const highlight = useMemo(() => {
     if (!hovered) return new Set<string>();
     const set = new Set<string>([hovered]);
@@ -247,14 +277,19 @@ export function KnowledgeGraph({ notes, edges, onOpenNote, onClose }: Props) {
 
   const allTags = useMemo(() => {
     const t = new Set<string>();
-    for (const n of notes) for (const tag of n.tags) t.add(tag);
+    for (const n of nodes) for (const tag of n.tags ?? []) t.add(tag);
     return [...t].sort();
-  }, [notes]);
+  }, [nodes]);
+
+  const allFolders = useMemo(() => [...new Set(nodes.filter((n) => n.type === "note" && n.folder).map((n) => n.folder!))].sort(), [nodes]);
 
   const orphans = useMemo(
-    () => filtered.nodes.filter((n) => (filtered.connected.has(n.id) ? false : filtered.edges.every((e) => e.source !== n.id && e.target !== n.id))),
+    () => filtered.nodes.filter((n) => !filtered.connected.has(n.id)),
     [filtered],
   );
+
+  const explicitCount = edges.filter((e) => e.kind === "explicit").length;
+  const detectedCount = edges.filter((e) => e.kind === "detected").length;
 
   const W = 1100;
   const H = 660;
@@ -275,7 +310,8 @@ export function KnowledgeGraph({ notes, edges, onOpenNote, onClose }: Props) {
           <div className="min-w-0">
             <p className="text-[10.5px] font-semibold uppercase tracking-[0.18em] text-accent">Knowledge graph</p>
             <p className="mt-0.5 text-[12.5px] text-frost-500">
-              Generated from the real [[links]] in your notes — {filtered.nodes.length} notes · {filtered.edges.length} connections
+              {filtered.nodes.length} things · <span className="text-frost-400">🔗 {explicitCount} explicit</span> ·{" "}
+              <span className="text-frost-400">🧠 {detectedCount} detected</span>
               {orphans.length > 0 && ` · ${orphans.length} orphan${orphans.length === 1 ? "" : "s"}`}
             </p>
           </div>
@@ -299,38 +335,48 @@ export function KnowledgeGraph({ notes, edges, onOpenNote, onClose }: Props) {
 
         {/* Filters */}
         <div className="no-scrollbar flex items-center gap-2 overflow-x-auto border-b border-white/6 px-5 py-2.5">
-          <FilterChip
-            label="All folders"
-            active={folderFilter.length === 0}
-            onClick={() => setFolderFilter([])}
-          />
-          {[...new Set(notes.map((n) => n.folder).filter(Boolean))].sort().map((folder) => (
+          {/* Search within the graph */}
+          <div className="flex h-7 items-center gap-1.5 rounded-full border border-white/10 bg-white/5 px-2.5">
+            <Search size={11} className="text-frost-500" />
+            <input
+              value={query}
+              onChange={(e) => setQuery(e.target.value)}
+              placeholder="Find in graph…"
+              className="w-32 bg-transparent text-[12px] text-frost-100 outline-none placeholder:text-frost-500/70"
+            />
+            {query && (
+              <button onClick={() => setQuery("")} className="text-frost-500 hover:text-frost-200">
+                <X size={10} />
+              </button>
+            )}
+          </div>
+
+          {/* Type filters */}
+          {(["all", "note", "app", "folder", "workspace", "file"] as const).map((t) => (
+            <FilterChip key={t} label={t === "all" ? "All types" : TYPE_LABEL[t]} active={typeFilter === t} onClick={() => setTypeFilter(t)} />
+          ))}
+
+          <span className="mx-1 h-4 w-px bg-white/10" />
+
+          <FilterChip label="All folders" active={folderFilter.length === 0} onClick={() => setFolderFilter([])} />
+          {allFolders.map((folder) => (
             <FilterChip
               key={folder}
               label={folder}
               active={folderFilter.includes(folder)}
-              onClick={() =>
-                setFolderFilter((f) => (f.includes(folder) ? f.filter((x) => x !== folder) : [...f, folder]))
-              }
+              onClick={() => setFolderFilter((f) => (f.includes(folder) ? f.filter((x) => x !== folder) : [...f, folder]))}
             />
           ))}
+
           <span className="mx-1 h-4 w-px bg-white/10" />
+
           {allTags.map((tag) => (
-            <FilterChip
-              key={tag}
-              label={`#${tag}`}
-              active={tagFilter.includes(tag)}
-              onClick={() => setTagFilter((t) => (t.includes(tag) ? t.filter((x) => x !== tag) : [...t, tag]))}
-              tag
-            />
+            <FilterChip key={tag} label={`#${tag}`} active={tagFilter.includes(tag)} onClick={() => setTagFilter((t) => (t.includes(tag) ? t.filter((x) => x !== tag) : [...t, tag]))} tag />
           ))}
+
           <span className="mx-1 h-4 w-px bg-white/10" />
-          <FilterChip
-            label="Orphans"
-            active={showOrphans}
-            onClick={() => setShowOrphans((v) => !v)}
-            toggle
-          />
+
+          <FilterChip label="Orphans" active={showOrphans} onClick={() => setShowOrphans((v) => !v)} toggle />
         </div>
 
         {/* Canvas */}
@@ -347,24 +393,24 @@ export function KnowledgeGraph({ notes, edges, onOpenNote, onClose }: Props) {
             onWheel={onWheel}
           >
             <g transform={`translate(${view.x + W / 2}, ${view.y + H / 2}) scale(${view.s})`}>
-              {/* edges */}
+              {/* edges — explicit solid, detected dashed */}
               {filtered.edges.map((e) => {
                 const a = pos.get(e.source);
                 const b = pos.get(e.target);
                 if (!a || !b) return null;
-                const active =
-                  (hovered && (e.source === hovered || e.target === hovered)) ||
-                  (highlight.has(e.source) && highlight.has(e.target));
+                const active = (hovered && (e.source === hovered || e.target === hovered)) || (highlight.has(e.source) && highlight.has(e.target));
+                const detected = e.kind === "detected";
                 return (
                   <line
-                    key={`${e.source}|${e.target}`}
+                    key={`${e.source}|${e.target}|${e.kind}`}
                     x1={a.x}
                     y1={a.y}
                     x2={b.x}
                     y2={b.y}
-                    stroke={active ? "var(--accent)" : "rgba(120,150,200,0.28)"}
-                    strokeWidth={active ? 2.2 : 1.2}
-                    strokeOpacity={hovered && !active ? 0.15 : 1}
+                    stroke={active ? (detected ? "#7ce0c9" : "var(--accent)") : detected ? "rgba(124,224,201,0.22)" : "rgba(120,150,200,0.28)"}
+                    strokeWidth={active ? 2 : 1.1}
+                    strokeDasharray={detected ? "5 4" : undefined}
+                    strokeOpacity={hovered && !active ? 0.12 : 1}
                     className="transition-all duration-200"
                   />
                 );
@@ -376,7 +422,7 @@ export function KnowledgeGraph({ notes, edges, onOpenNote, onClose }: Props) {
                 if (!p) return null;
                 const isHovered = hovered === n.id;
                 const isNeighbor = highlight.has(n.id);
-                const isOrphan = !filtered.edges.some((e) => e.source === n.id || e.target === n.id);
+                const isOrphan = !filtered.connected.has(n.id);
                 return (
                   <g
                     key={n.id}
@@ -386,15 +432,87 @@ export function KnowledgeGraph({ notes, edges, onOpenNote, onClose }: Props) {
                     onPointerEnter={() => setHovered(n.id)}
                     onPointerLeave={() => setHovered(null)}
                   >
-                    <circle
-                      r={isHovered ? 27 : 23}
-                      fill={isOrphan ? "#1b2333" : "var(--accent)"}
-                      fillOpacity={isHovered ? 1 : isNeighbor && !isHovered ? 0.9 : 0.55}
-                      stroke={isHovered ? "#fff" : isNeighbor ? "var(--accent)" : "rgba(255,255,255,0.25)"}
-                      strokeWidth={isHovered ? 2 : 1.4}
-                      className="transition-all duration-200"
-                      style={{ filter: isHovered ? "drop-shadow(0 0 14px var(--accent-glow))" : undefined }}
-                    />
+                    {n.type === "note" ? (
+                      <circle
+                        r={isHovered ? 27 : 23}
+                        fill={isOrphan ? "#1b2333" : "var(--accent)"}
+                        fillOpacity={isHovered ? 1 : isNeighbor && !isHovered ? 0.9 : 0.55}
+                        stroke={isHovered ? "#fff" : isNeighbor ? "var(--accent)" : "rgba(255,255,255,0.25)"}
+                        strokeWidth={isHovered ? 2 : 1.4}
+                        className="transition-all duration-200"
+                        style={{ filter: isHovered ? "drop-shadow(0 0 14px var(--accent-glow))" : undefined }}
+                      />
+                    ) : n.type === "app" ? (
+                      <g>
+                        <rect
+                          x={-22}
+                          y={-22}
+                          width={44}
+                          height={44}
+                          rx={12}
+                          fill={isOrphan ? "#1b2333" : n.color}
+                          fillOpacity={isHovered ? 1 : isNeighbor && !isHovered ? 0.9 : 0.6}
+                          stroke={isHovered ? "#fff" : "rgba(255,255,255,0.25)"}
+                          strokeWidth={isHovered ? 2 : 1.2}
+                          className="transition-all duration-200"
+                          style={{ filter: isHovered ? `drop-shadow(0 0 16px ${n.color}88)` : undefined }}
+                        />
+                        <g transform="scale(1.1)">
+                          <AppIcon icon={n.icon} color={n.color} size={22} rounded="rounded-[6px]" />
+                        </g>
+                      </g>
+                    ) : n.type === "folder" ? (
+                      <g>
+                        <rect
+                          x={-21}
+                          y={-17}
+                          width={42}
+                          height={34}
+                          rx={9}
+                          fill={isOrphan ? "#1b2333" : n.color}
+                          fillOpacity={isHovered ? 1 : isNeighbor && !isHovered ? 0.9 : 0.55}
+                          stroke={isHovered ? "#fff" : "rgba(255,255,255,0.25)"}
+                          strokeWidth={isHovered ? 2 : 1.2}
+                          className="transition-all duration-200"
+                          style={{ filter: isHovered ? `drop-shadow(0 0 14px ${n.color}77)` : undefined }}
+                        />
+                        <Folder size={15} x={-7.5} y={-7.5} color="rgba(255,255,255,0.9)" strokeWidth={2} />
+                      </g>
+                    ) : n.type === "workspace" ? (
+                      <g>
+                        <rect
+                          x={-20}
+                          y={-20}
+                          width={40}
+                          height={40}
+                          rx={10}
+                          transform="rotate(45)"
+                          fill={isOrphan ? "#1b2333" : n.color}
+                          fillOpacity={isHovered ? 1 : isNeighbor && !isHovered ? 0.9 : 0.55}
+                          stroke={isHovered ? "#fff" : "rgba(255,255,255,0.25)"}
+                          strokeWidth={isHovered ? 2 : 1.2}
+                          className="transition-all duration-200"
+                          style={{ filter: isHovered ? `drop-shadow(0 0 14px ${n.color}77)` : undefined }}
+                        />
+                        <Layers size={16} x={-8} y={-8} color="rgba(255,255,255,0.92)" strokeWidth={2} />
+                      </g>
+                    ) : (
+                      <g>
+                        <rect
+                          x={-19}
+                          y={-19}
+                          width={38}
+                          height={38}
+                          rx={7}
+                          fill={isOrphan ? "#1b2333" : n.color}
+                          fillOpacity={isHovered ? 1 : isNeighbor && !isHovered ? 0.9 : 0.6}
+                          stroke={isHovered ? "#fff" : "rgba(255,255,255,0.25)"}
+                          strokeWidth={isHovered ? 2 : 1.2}
+                          className="transition-all duration-200"
+                        />
+                        <AppIcon icon="fileText" color={n.color} size={20} rounded="rounded-[5px]" />
+                      </g>
+                    )}
                     <text
                       textAnchor="middle"
                       dy={38}
@@ -403,7 +521,7 @@ export function KnowledgeGraph({ notes, edges, onOpenNote, onClose }: Props) {
                         isHovered ? "fill-[var(--accent)]" : isOrphan ? "fill-frost-500" : "fill-frost-200",
                       )}
                     >
-                      {n.name.length > 22 ? `${n.name.slice(0, 21)}…` : n.name}
+                      {n.label.length > 20 ? `${n.label.slice(0, 19)}…` : n.label}
                     </text>
                   </g>
                 );
@@ -412,9 +530,18 @@ export function KnowledgeGraph({ notes, edges, onOpenNote, onClose }: Props) {
           </svg>
 
           {/* hint */}
-          <div className="pointer-events-none absolute bottom-3 left-1/2 flex -translate-x-1/2 items-center gap-3 rounded-full border border-white/8 bg-[#05070d]/80 px-4 py-1.5 text-[11px] text-frost-500 backdrop-blur">
-            <span>Scroll to zoom</span>·<span>Drag canvas to pan</span>·<span>Drag notes</span>·
-            <span>Click a note to open it</span>
+          <div className="pointer-events-none absolute bottom-3 left-1/2 flex -translate-x-1/2 flex-wrap items-center justify-center gap-x-3 gap-y-1 rounded-full border border-white/8 bg-[#05070d]/80 px-4 py-1.5 text-[11px] text-frost-500 backdrop-blur">
+            <span>Scroll to zoom</span>·<span>Drag canvas</span>·<span>Drag nodes</span>·
+            <span className="text-frost-400">Click: open / launch</span>·
+            <span className="text-frost-400">
+              <span className="mr-1 inline-block h-[2px] w-4 translate-y-[-2px] rounded bg-[rgba(120,150,200,0.5)]" />
+              explicit
+            </span>
+            ·
+            <span className="text-frost-400">
+              <span className="mr-1 inline-block h-0 w-4 translate-y-[-2px] rounded border-t border-dashed border-[rgba(124,224,201,0.7)]" />
+              detected
+            </span>
           </div>
         </div>
       </div>
@@ -422,19 +549,7 @@ export function KnowledgeGraph({ notes, edges, onOpenNote, onClose }: Props) {
   );
 }
 
-function FilterChip({
-  label,
-  active,
-  onClick,
-  tag,
-  toggle,
-}: {
-  label: string;
-  active: boolean;
-  onClick: () => void;
-  tag?: boolean;
-  toggle?: boolean;
-}) {
+function FilterChip({ label, active, onClick, tag, toggle }: { label: string; active: boolean; onClick: () => void; tag?: boolean; toggle?: boolean }) {
   return (
     <button
       onClick={onClick}
@@ -442,10 +557,7 @@ function FilterChip({
         "shrink-0 rounded-full border px-3 py-1 text-[11.5px] font-medium transition",
         active
           ? "border-[color-mix(in_srgb,var(--accent)_55%,transparent)] bg-accent-soft text-accent"
-          : cn(
-              "border-white/8 bg-white/4 text-frost-400 hover:bg-white/8 hover:text-frost-200",
-              toggle && active === false && "border-dashed",
-            ),
+          : cn("border-white/8 bg-white/4 text-frost-400 hover:bg-white/8 hover:text-frost-200", toggle && active === false && "border-dashed"),
       )}
     >
       {tag ? `#${label}` : toggle ? (active ? "Orphans: on" : "Orphans: off") : label}

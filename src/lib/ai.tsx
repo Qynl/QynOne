@@ -381,6 +381,9 @@ export function AiProvider({
         run: () => {
           const s = statsRef.current.stats;
           const i = statsRef.current.sys;
+          if (!s) {
+            return `No live readings available in this preview — in the installed app I read CPU, memory and uptime straight from this PC. Machine: ${i.os}, ${i.cores} cores${i.cpuModel ? `, ${i.cpuModel}` : ""}.`;
+          }
           const memPct = Math.round((s.memUsedBytes / s.memTotalBytes) * 100);
           return `CPU ${s.cpuPct}%, memory ${memPct}% (${Math.round(s.memTotalBytes / 2 ** 30)} GB total), uptime ${Math.floor(s.uptimeSec / 3600)}h, OS ${i.os}, ${i.cores} cores${i.cpuModel ? `, ${i.cpuModel}` : ""}.`;
         },

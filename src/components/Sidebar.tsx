@@ -4,6 +4,7 @@ import type { LucideIcon } from "lucide-react";
 import { useQyn } from "../lib/store";
 import type { ViewId } from "../lib/types";
 import { cn } from "../lib/utils";
+import { useStats } from "../lib/stats";
 import { useSystemInfo } from "../lib/system";
 import { Avatar, useUi } from "./ui";
 
@@ -34,6 +35,7 @@ export function Sidebar({
   const { state } = useQyn();
   const { openAddApp } = useUi();
   const sys = useSystemInfo();
+  const stats = useStats();
 
   const folderCounts = new Map(state.folders.map((f) => [f.id, state.apps.filter((a) => a.folderId === f.id).length]));
 
@@ -140,20 +142,24 @@ export function Sidebar({
             <div className="flex items-center gap-2">
               <span className="relative flex h-2 w-2">
                 <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-emerald-400/60" />
-                <span className="relative inline-flex h-2 w-2 rounded-full bg-emerald-400" />
+                <span className={cn("relative inline-flex h-2 w-2 rounded-full", stats && stats.cpuPct >= 85 ? "bg-rose-400" : "bg-emerald-400")} />
               </span>
-              <p className="text-[12px] font-semibold text-frost-200">{sys.os}</p>
+              <p className="text-[12px] font-semibold text-frost-200">
+                {stats ? `${sys.os} · ${stats.cpuPct}%` : sys.os}
+              </p>
             </div>
             <div className="mt-2 flex items-center justify-between text-[11.5px] text-frost-500">
-              <span>{sys.memoryGb} GB RAM</span>
-              <span>{sys.cores} cores</span>
+              <span>{stats ? `${Math.round(stats.memUsedBytes / 2 ** 30)} GB used` : `${sys.memoryGb ?? "—"} GB RAM`}</span>
+              <span>{sys.cores ?? "—"} cores</span>
             </div>
-            <div className="mt-1 h-[3px] overflow-hidden rounded-full bg-white/8">
-              <div
-                className="h-full rounded-full bg-[var(--accent)] transition-all duration-700"
-                style={{ width: `${sys.load}%`, opacity: 0.75 }}
-              />
-            </div>
+            {stats && (
+              <div className="mt-1 h-[3px] overflow-hidden rounded-full bg-white/8">
+                <div
+                  className={cn("h-full rounded-full transition-all duration-700", stats.cpuPct >= 85 ? "bg-rose-400" : "bg-[var(--accent)]")}
+                  style={{ width: `${stats.cpuPct}%`, opacity: 0.75 }}
+                />
+              </div>
+            )}
           </button>
         </div>
       </div>

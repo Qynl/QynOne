@@ -11,27 +11,34 @@ broken.
 > **The north star:** you open QynOne once, and you stop thinking about the Windows desktop entirely.
 > "Why would I even use the desktop anymore?"
 
-## What's in QynOne 2.0
+## What's in QynOne 2.1
 
 - **Qyn — a real AI assistant with a face.** Two rectangular eyes on your Home screen that express what it's doing
   (listening, thinking, working, happy…). Qyn has *real tools* with real access to QynOne: it can open your apps and
   folders, launch workspaces, read your PC stats, search the vault, create and open notes. Type `/` in the chat to
   see its tools and use them directly.
-- **Real models only.** Qyn is powered by an actual language model you choose — **Ollama (local, free, private)**,
-  **OpenAI**, or any OpenAI-compatible endpoint — configured in **Settings → AI** and saved locally to
-  `qynone.env` on your PC. No fake assistant, no canned replies: if no model is configured, Qyn says so and points
-  you to Settings.
-- **Markdown Vault + Knowledge Graph** — a real Obsidian-style vault. On the desktop app the vault is a normal
+- **Real models only, zero fake.** Qyn is powered by an actual language model you choose — **Ollama (local, free,
+  private)**, **OpenAI**, or any OpenAI-compatible endpoint — configured in **Settings → AI** and saved locally to
+  `qynone.env` on your PC. There is no canned reply engine anywhere: if no model is configured, Qyn says so and
+  points you to Settings. There is no simulated anything left in the app — system stats, files, PC info and the
+  vault are all real data from the machine (the web preview simply shows nothing where it cannot read the PC).
+- **Markdown Vault + Knowledge Graph 2.0** — a real Obsidian-style vault. On the desktop app the vault is a normal
   folder of `.md` files (`Documents\QynOneVault`); QynOne reads and writes them directly — **the files are the
   source of truth**, portable and human-readable.
   - Notes link to each other with `[[Wiki Links]]`; **backlinks** and **orphan notes** are computed automatically.
-  - The **knowledge graph** is generated from the actual `[[links]]` in your files — never hardcoded. It supports
-    force-directed layout, zoom, pan, node dragging, hover highlighting, and filtering by folder, tag or orphans.
-    Clicking a node opens the note; adding, renaming or deleting notes updates the graph instantly.
+  - **The graph re-marks itself.** QynOne watches the vault folder, so editing a note in *any* editor, adding or
+    removing a `[[link]]`, renaming or deleting a file updates the graph automatically — no manual refresh.
+  - The graph is generated from the actual relationships in your files — never hardcoded — and it goes **beyond
+    notes**: apps, virtual folders, workspaces and starred files appear as typed nodes with **QynOne-detected**
+    relationships (a note that mentions Unreal sits next to your Unreal app) kept visually distinct from
+    **explicit** `[[wiki links]]`. Clicking a note opens the note; clicking an app launches the real app.
+  - Force-directed layout, zoom, pan, node dragging, hover highlighting of connections, dimming of unrelated
+    nodes, search, and filtering by type/folder/orphans.
   - Markdown editing with a live preview, tags (`#project`), full vault search, folders, and unresolved-link
     creation.
-- **Redesigned Home** — a darker, cleaner command center. The AI face and chat are the centerpiece, with compact
-  PC-status, quick-launch, folders, knowledge and workspace cards around it.
+- **Redesigned Home** — a darker, cleaner command center in deep blue-gray-black. The AI face and chat are the
+  centerpiece, with compact PC-status, quick-launch, folders, knowledge and workspace cards around it. The library
+  starts empty and honest — every tile is something you actually added.
 - **Customizable Home** — your widgets (PC status, quick-launch dock, virtual folders, environment snapshot) can be
   dragged to reorder or hidden — everything on Home is *yours*.
 - **Workspaces** — bundle the apps for one part of your life (Development, Gaming, School…) and **launch them all at
@@ -84,10 +91,10 @@ bun run dist:win
 | --- | --- |
 | Your environment (virtual folders, apps, workspaces, favorites, settings) | Saved automatically to `%APPDATA%\QynOne\qynone-state.json` — a plain, human-readable file on your PC. No cloud, no account. |
 | AI settings (provider, endpoint, model, API key) | Saved to `%APPDATA%\QynOne\qynone.env` — a plain `.env` file on your PC. The key never leaves the machine and is never logged. |
-| Markdown Vault | A real folder — `Documents\QynOneVault` — of `.md` files. QynOne reads and writes the files directly; they are the source of truth and work in any Markdown editor. |
+| Markdown Vault | A real folder — `Documents\QynOneVault` — of `.md` files. QynOne reads and writes the files directly; they are the source of truth and work in any Markdown editor. A file watcher auto-rescans the vault, so external edits re-mark the graph instantly. |
 | Launching an app or game | Through Windows' normal shell, the same way a double-click would. QynOne never executes arbitrary commands and never touches the real app files. |
 | Workspaces | Metadata only — a workspace is a list of app ids. Launching it opens each real app through Windows' shell, staggered, one by one. |
-| Live system stats | CPU %, memory, uptime, hostname, hardware — read via ordinary OS APIs at user level. QynOne never requests elevated access. |
+| Live system stats | CPU %, memory, uptime, hostname, hardware — read via ordinary OS APIs at user level. Never simulated: when the bridge can't read the PC (e.g. the web preview), the UI shows an honest empty state. QynOne never requests elevated access. |
 | File Center | Browsing is read-only (`readdir` + metadata). Opening a file/folder goes through Windows' shell like a double-click. |
 | Finding installed apps | "Find on this PC…" in the app editor reads your Start Menu shortcuts (`.lnk`/`.url`) — **read-only**. |
 | Virtual folders | Metadata only. QynOne never moves, copies, renames, or touches the real applications/folders on your PC. |

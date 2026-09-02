@@ -109,7 +109,20 @@ export function VaultProvider({ children }: { children: ReactNode }) {
 
   useEffect(() => {
     void refresh();
-  }, [refresh]);
+
+    /* Auto-rescan: re-read the .md files whenever the desktop app's watcher
+       fires, when the window regains focus, and on a slow poll as a safety
+       net — the graph re-marks itself from the real files automatically. */
+    const off = bridge?.onVaultChanged ? bridge.onVaultChanged(() => void refresh()) : undefined;
+    const onFocus = () => void refresh();
+    window.addEventListener("focus", onFocus);
+    const poll = setInterval(() => void refresh(), 15000);
+    return () => {
+      off?.();
+      window.removeEventListener("focus", onFocus);
+      clearInterval(poll);
+    };
+  }, [refresh, bridge]);
 
   /* Derived notes with links/backlinks/tags — the source of truth is files. */
   const notes = useMemo<VaultNote[]>(() => {

@@ -35,7 +35,7 @@ export function HomeView({
   onOpenNote: (name: string) => void;
 }) {
   return (
-    <div className="mx-auto w-full max-w-[1180px] px-5 py-6 md:px-8">
+    <div className="mx-auto w-full max-w-[1240px] px-5 py-6 md:px-8">
       <Hero onNavigate={onNavigate} onOpenPalette={onOpenPalette} />
       <AiPanel />
       <Widgets onNavigate={onNavigate} onOpenFolder={onOpenFolder} onOpenNote={onOpenNote} />
@@ -44,7 +44,7 @@ export function HomeView({
 }
 
 /* ------------------------------------------------------------------ */
-/* Hero — slim greeting strip                                          */
+/* Hero — greeting + live clock + search                               */
 /* ------------------------------------------------------------------ */
 
 function Hero({ onNavigate, onOpenPalette }: { onNavigate: (v: ViewId) => void; onOpenPalette: () => void }) {
@@ -82,7 +82,7 @@ function Hero({ onNavigate, onOpenPalette }: { onNavigate: (v: ViewId) => void; 
           <p className="text-[15px] font-bold tabular-nums tracking-tight text-frost-100">
             <LiveClock />
           </p>
-          <p className="text-[10px] font-medium text-frost-500">uptime companion</p>
+          <p className="text-[10px] font-medium text-frost-500">your PC, on your terms</p>
         </div>
       </div>
     </motion.div>
@@ -102,12 +102,7 @@ function LiveClock() {
 /* AI panel — the face and the chat                                    */
 /* ------------------------------------------------------------------ */
 
-const SUGGESTIONS = [
-  "What's on my PC right now?",
-  "Open VS Code",
-  "Create a note about my ideas",
-  "Show me the vault graph",
-];
+const SUGGESTIONS = ["What's on my PC right now?", "Open VS Code", "Create a note about my ideas", "Show me the vault graph"];
 
 function AiPanel() {
   const { messages, busy, emotion, tools, send, setListening, clearChat } = useAi();
@@ -144,7 +139,7 @@ function AiPanel() {
     >
       <div
         className="pointer-events-none absolute -top-24 left-1/2 h-64 w-[560px] -translate-x-1/2 rounded-full blur-3xl"
-        style={{ background: "radial-gradient(ellipse, var(--accent-glow), transparent 65%)", opacity: 0.5 }}
+        style={{ background: "radial-gradient(ellipse, var(--accent-glow), transparent 65%)", opacity: 0.4 }}
       />
 
       <div className="relative grid gap-0 lg:grid-cols-[300px_minmax(0,1fr)]">
@@ -159,10 +154,7 @@ function AiPanel() {
             Your assistant inside QynOne — it can open your apps, use the vault and watch your PC.
           </p>
           {messages.length > 0 && (
-            <button
-              onClick={clearChat}
-              className="mt-3 text-[11px] font-medium text-frost-600 transition hover:text-frost-300"
-            >
+            <button onClick={clearChat} className="mt-3 text-[11px] font-medium text-frost-600 transition hover:text-frost-300">
               Clear conversation
             </button>
           )}
@@ -176,8 +168,7 @@ function AiPanel() {
                 <Sparkles size={20} className="text-accent" />
                 <p className="mt-2 text-[14px] font-semibold text-frost-200">Talk to me.</p>
                 <p className="mt-1 max-w-sm text-[12.5px] leading-relaxed text-frost-500">
-                  Ask me to open your apps, manage your vault, or check your PC. Type{" "}
-                  <span className="font-semibold text-frost-300">/</span> to see the tools I can use directly.
+                  Ask me to open your apps, manage your vault, or check your PC. Type <span className="font-semibold text-frost-300">/</span> to see the tools I can use directly.
                 </p>
               </div>
             ) : (
@@ -229,9 +220,7 @@ function AiPanel() {
                   exit={{ opacity: 0, y: 4 }}
                   className="glass-strong accent-scroll absolute bottom-[calc(100%-2px)] left-4 right-4 z-20 max-h-56 overflow-y-auto rounded-xl p-1.5 shadow-[0_24px_60px_-20px_rgba(0,0,0,0.85)]"
                 >
-                  <p className="px-2.5 pb-1 pt-1 text-[10px] font-semibold uppercase tracking-[0.16em] text-frost-500">
-                    Qyn's tools
-                  </p>
+                  <p className="px-2.5 pb-1 pt-1 text-[10px] font-semibold uppercase tracking-[0.16em] text-frost-500">Qyn's tools</p>
                   {slashFiltered.map((t) => (
                     <button
                       key={t.name}
@@ -331,9 +320,7 @@ function Widgets({
         {favorites.length === 0 ? (
           <div className="py-5 text-center">
             <Star size={18} className="mx-auto text-frost-500/60" />
-            <p className="mt-1.5 text-[12.5px] text-frost-500">
-              Pin your most-used apps — they'll sit here, one click away.
-            </p>
+            <p className="mt-1.5 text-[12.5px] text-frost-500">Pin your most-used apps — they'll sit here, one click away.</p>
             <button
               onClick={() => onNavigate("apps")}
               className="mt-3 inline-flex h-8 items-center gap-1.5 rounded-lg bg-accent-soft px-3 text-[12px] font-semibold text-frost-100 transition hover:bg-[color-mix(in_srgb,var(--accent)_24%,transparent)]"
@@ -357,10 +344,7 @@ function Widgets({
         )}
       </WidgetCard>
 
-      <WidgetCard
-        title="Virtual folders"
-        action={<WidgetLink label="Library" onClick={() => onNavigate("folders")} />}
-      >
+      <WidgetCard title="Virtual folders" action={<WidgetLink label="Library" onClick={() => onNavigate("folders")} />}>
         {state.folders.length === 0 ? (
           <p className="py-5 text-center text-[12.5px] text-frost-500">Create virtual folders to organize your apps.</p>
         ) : (
@@ -372,12 +356,8 @@ function Widgets({
                 className="glass-soft group flex items-center gap-2 rounded-xl px-3 py-2 transition hover:border-[color-mix(in_srgb,var(--accent)_35%,transparent)]"
               >
                 <AppIcon icon={f.icon} color={f.color} size={28} rounded="rounded-[8px]" />
-                <span className="text-[12.5px] font-semibold text-frost-200 group-hover:text-frost-100">
-                  {f.name}
-                </span>
-                <span className="text-[10.5px] tabular-nums text-frost-500">
-                  {state.apps.filter((a) => a.folderId === f.id).length}
-                </span>
+                <span className="text-[12.5px] font-semibold text-frost-200 group-hover:text-frost-100">{f.name}</span>
+                <span className="text-[10.5px] tabular-nums text-frost-500">{state.apps.filter((a) => a.folderId === f.id).length}</span>
               </button>
             ))}
           </div>
@@ -389,11 +369,7 @@ function Widgets({
       </WidgetCard>
 
       {state.workspaces.length > 0 && (
-        <WidgetCard
-          title="Workspaces"
-          action={<WidgetLink label="All" onClick={() => onNavigate("workspaces")} />}
-          wide
-        >
+        <WidgetCard title="Workspaces" action={<WidgetLink label="All" onClick={() => onNavigate("workspaces")} />} wide>
           <div className="no-scrollbar flex gap-2.5 overflow-x-auto pb-1">
             {state.workspaces.map((ws) => {
               const apps = ws.itemIds.map((id) => state.apps.find((a) => a.id === id)).filter(Boolean);
@@ -422,17 +398,7 @@ function Widgets({
   );
 }
 
-function WidgetCard({
-  title,
-  action,
-  children,
-  wide,
-}: {
-  title: string;
-  action?: React.ReactNode;
-  children: React.ReactNode;
-  wide?: boolean;
-}) {
+function WidgetCard({ title, action, children, wide }: { title: string; action?: React.ReactNode; children: React.ReactNode; wide?: boolean }) {
   return (
     <motion.div
       initial={{ opacity: 0, y: 10 }}
@@ -456,10 +422,7 @@ function WidgetCard({
 
 function WidgetLink({ label, onClick }: { label: string; onClick: () => void }) {
   return (
-    <button
-      onClick={onClick}
-      className="flex items-center gap-1 text-[11.5px] font-medium text-frost-500 transition hover:text-accent"
-    >
+    <button onClick={onClick} className="flex items-center gap-1 text-[11.5px] font-medium text-frost-500 transition hover:text-accent">
       {label} <ArrowRight size={11} />
     </button>
   );
@@ -489,8 +452,25 @@ function StatusStrip() {
   const stats = useStats();
   const sys = useSystemInfo();
   const pct = sys.battery ? Math.round(sys.battery.level * 100) : null;
-  const memPct = Math.round((stats.memUsedBytes / stats.memTotalBytes) * 100);
 
+  /* Web preview: no OS access → show machine facts only, never fake numbers. */
+  if (!stats) {
+    return (
+      <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-dashed border-white/10 bg-white/[0.02] px-3.5 py-3">
+        <div className="flex items-center gap-2 text-[12px] text-frost-400">
+          <span className="relative flex h-2 w-2">
+            <span className="relative inline-flex h-2 w-2 rounded-full bg-emerald-400/70" />
+          </span>
+          {sys.hostname ? `${sys.hostname} · ${sys.os}` : sys.os}
+        </div>
+        <p className="text-[11px] text-frost-500">
+          Live CPU &amp; memory appear in the installed app — nothing here is simulated.
+        </p>
+      </div>
+    );
+  }
+
+  const memPct = Math.round((stats.memUsedBytes / stats.memTotalBytes) * 100);
   const items: Array<{ icon: React.ReactNode; label: string; value: string; bar: number; barClass?: string }> = [
     { icon: <Cpu size={12} />, label: "CPU", value: `${stats.cpuPct}%`, bar: stats.cpuPct },
     { icon: <MemoryStick size={12} />, label: "RAM", value: `${memPct}%`, bar: memPct },
@@ -546,11 +526,11 @@ function KnowledgeStrip({ onOpenNote }: { onOpenNote: (name: string) => void }) 
     return (
       <div className="py-4 text-center">
         <FileText size={18} className="mx-auto text-frost-500/60" />
-        <p className="mt-1.5 text-[12.5px] text-frost-500">
-          Your Markdown vault is empty — start one and Qyn will map it.
-        </p>
+        <p className="mt-1.5 text-[12.5px] text-frost-500">Your Markdown vault is empty — start one and Qyn will map it.</p>
         <button
-          onClick={() => void vault.createNote("Welcome", "", `# Welcome\n\nThis is your vault. Notes link with [[Wiki Links]] and QynOne builds the graph from them.\n`)}
+          onClick={() =>
+            void vault.createNote("Welcome", "", `# Welcome\n\nThis is your vault. Notes link with [[Wiki Links]] and QynOne builds the graph from them.\n`)
+          }
           className="mt-3 inline-flex h-8 items-center gap-1.5 rounded-lg bg-accent-soft px-3 text-[12px] font-semibold text-frost-100 transition hover:bg-[color-mix(in_srgb,var(--accent)_24%,transparent)]"
         >
           <Plus size={12} /> Create first note

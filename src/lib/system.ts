@@ -35,13 +35,13 @@ function effectiveType(): string | null {
 }
 
 /**
- * Real battery/network where the platform allows, real machine facts in the
- * desktop app (hostname, CPU, RAM), gentle simulated load everywhere so the
- * panels always feel alive.
+ * Only real facts, nothing simulated:
+ *  - battery & network state via real browser APIs,
+ *  - real machine facts (hostname, CPU, RAM) from the desktop app.
+ * Fields the platform can't provide are null.
  */
 export function useSystemInfo() {
   const [battery, setBattery] = useState<BatterySnapshot | null>(null);
-  const [load, setLoad] = useState(() => 14 + Math.round(Math.random() * 12));
   const [online, setOnline] = useState(navigator.onLine);
   const [netType, setNetType] = useState<string | null>(effectiveType);
   const [machine, setMachine] = useState<SystemInfo | null>(null);
@@ -87,25 +87,27 @@ export function useSystemInfo() {
     };
   }, []);
 
-  // Gentle simulated load so the panel feels alive.
+  /* Network state — real, watched live. */
   useEffect(() => {
-    const timer = setInterval(() => {
-      setLoad((prev) => {
-        const next = prev + Math.round(Math.random() * 14 - 7);
-        return Math.max(6, Math.min(42, next));
-      });
+    const on = () => {
       setOnline(navigator.onLine);
       setNetType(effectiveType());
-    }, 3000);
-    return () => clearInterval(timer);
+    };
+    window.addEventListener("online", on);
+    window.addEventListener("offline", on);
+    const t = setInterval(on, 5000);
+    return () => {
+      window.removeEventListener("online", on);
+      window.removeEventListener("offline", on);
+      clearInterval(t);
+    };
   }, []);
 
-  const memoryGb = machine ? Math.max(1, Math.round(machine.totalMemBytes / 2 ** 30)) : (navigator as Navigator & { deviceMemory?: number }).deviceMemory ?? 16;
-  const cores = machine ? machine.cores : navigator.hardwareConcurrency ?? 8;
+  const memoryGb = machine ? Math.max(1, Math.round(machine.totalMemBytes / 2 ** 30)) : null;
+  const cores = machine ? machine.cores : null;
 
   return {
     battery,
-    load,
     online,
     netType,
     memoryGb,

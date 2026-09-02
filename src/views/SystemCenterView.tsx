@@ -7,20 +7,16 @@ import { cn } from "../lib/utils";
 
 const HISTORY = 48;
 
-function useHistory() {
+function useHistory(enabled: boolean) {
   const stats = useStats();
-  const [cpu, setCpu] = useState<number[]>(() => Array(HISTORY).fill(stats.cpuPct));
-  const [mem, setMem] = useState<number[]>(() =>
-    Array(HISTORY).fill(Math.round((stats.memUsedBytes / stats.memTotalBytes) * 100)),
-  );
+  const [cpu, setCpu] = useState<number[]>(() => Array(HISTORY).fill(0));
+  const [mem, setMem] = useState<number[]>(() => Array(HISTORY).fill(0));
 
   useEffect(() => {
+    if (!stats) return;
     setCpu((prev) => [...prev.slice(-(HISTORY - 1)), stats.cpuPct]);
-    setMem((prev) => [
-      ...prev.slice(-(HISTORY - 1)),
-      Math.round((stats.memUsedBytes / stats.memTotalBytes) * 100),
-    ]);
-  }, [stats.cpuPct, stats.memUsedBytes, stats.memTotalBytes]);
+    setMem((prev) => [...prev.slice(-(HISTORY - 1)), Math.round((stats.memUsedBytes / stats.memTotalBytes) * 100)]);
+  }, [enabled, stats?.cpuPct, stats?.memUsedBytes, stats?.memTotalBytes]);
 
   return { cpu, mem };
 }
@@ -28,7 +24,35 @@ function useHistory() {
 export function SystemCenterView() {
   const stats = useStats();
   const sys = useSystemInfo();
-  const { cpu, mem } = useHistory();
+  const { cpu, mem } = useHistory(stats !== null);
+
+  /* Web preview: no OS access → honest "installed app only" state, no fake numbers. */
+  if (!stats) {
+    return (
+      <div className="mx-auto w-full max-w-[1120px] px-5 py-7 md:px-8">
+        <div>
+          <p className="text-[11.5px] font-semibold uppercase tracking-[0.2em] text-accent">System Center</p>
+          <h1 className="mt-1 text-[26px] font-bold tracking-tight text-frost-100 md:text-[30px]">
+            Your PC, live.
+          </h1>
+        </div>
+        <div className="mt-7 flex min-h-[320px] flex-col items-center justify-center rounded-2xl border border-dashed border-white/10 bg-white/[0.02] px-6 text-center">
+          <Monitor size={26} className="text-frost-500/60" />
+          <p className="mt-4 text-[15px] font-semibold text-frost-200">Live readings appear in the installed app</p>
+          <p className="mt-1.5 max-w-md text-[12.5px] leading-relaxed text-frost-500">
+            QynOne reads real CPU, memory and uptime straight from this machine at user level. The web preview has no
+            access to the OS, so it shows nothing rather than pretending.
+          </p>
+          <div className="mt-6 grid w-full max-w-xl gap-3 sm:grid-cols-2">
+            <HardwareCard icon={<Monitor size={14} />} label="Operating system" value={sys.os} />
+            <HardwareCard icon={<Server size={14} />} label="PC name" value={sys.hostname ?? "—"} />
+            <HardwareCard icon={<Cpu size={14} />} label="Processor" value={sys.cpuModel ?? "—"} />
+            <HardwareCard icon={<MemoryStick size={14} />} label="Memory" value={sys.memoryGb !== null ? `${sys.memoryGb} GB` : "—"} />
+          </div>
+        </div>
+      </div>
+    );
+  }
 
   const memPct = Math.round((stats.memUsedBytes / stats.memTotalBytes) * 100);
   const memUsedGb = (stats.memUsedBytes / 2 ** 30).toFixed(1);
@@ -51,60 +75,22 @@ export function SystemCenterView() {
             <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-emerald-400/60" />
             <span className="relative inline-flex h-2 w-2 rounded-full bg-emerald-400" />
           </span>
-          <span className="text-[12px] font-semibold text-frost-200">
-            {stats.platform === "web" ? "Preview simulation" : `${sys.os} · live`}
-          </span>
+          <span className="text-[12px] font-semibold text-frost-200">{sys.os} · live</span>
         </div>
       </div>
 
       {/* Stat cards */}
       <div className="mt-7 grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
-        <StatCard
-          icon={<Cpu size={15} />}
-          label="CPU"
-          value={`${stats.cpuPct}%`}
-          sub={sys.cpuModel ?? `${sys.cores} logical processors`}
-          tone={toneFor(stats.cpuPct)}
-        />
-        <StatCard
-          icon={<MemoryStick size={15} />}
-          label="Memory"
-          value={`${memPct}%`}
-          sub={`${memUsedGb} / ${memTotalGb} GB used`}
-          tone={toneFor(memPct)}
-        />
-        <StatCard
-          icon={<Clock4 size={15} />}
-          label="Uptime"
-          value={formatUptime(stats.uptimeSec)}
-          sub="since last boot"
-          tone="good"
-        />
-        <StatCard
-          icon={<Server size={15} />}
-          label="Processor"
-          value={`${sys.cores}`}
-          sub={sys.arch ? `${sys.arch} · ${sys.hostname ?? "your PC"}` : "logical cores"}
-          tone="good"
-        />
+        <StatCard icon={<Cpu size={15} />} label="CPU" value={`${stats.cpuPct}%`} sub={sys.cpuModel ?? `${sys.cores} logical processors`} tone={toneFor(stats.cpuPct)} />
+        <StatCard icon={<MemoryStick size={15} />} label="Memory" value={`${memPct}%`} sub={`${memUsedGb} / ${memTotalGb} GB used`} tone={toneFor(memPct)} />
+        <StatCard icon={<Clock4 size={15} />} label="Uptime" value={formatUptime(stats.uptimeSec)} sub="since last boot" tone="good" />
+        <StatCard icon={<Server size={15} />} label="Processor" value={`${sys.cores}`} sub={sys.arch ? `${sys.arch} · ${sys.hostname ?? "your PC"}` : "logical cores"} tone="good" />
       </div>
 
       {/* Live charts */}
       <div className="mt-6 grid gap-5 lg:grid-cols-2">
-        <ChartCard
-          icon={<Cpu size={14} />}
-          title="CPU load"
-          value={`${stats.cpuPct}%`}
-          data={cpu}
-          color="var(--accent)"
-        />
-        <ChartCard
-          icon={<MemoryStick size={14} />}
-          title="Memory"
-          value={`${memPct}% · ${memUsedGb} GB`}
-          data={mem}
-          color="#7ce0c9"
-        />
+        <ChartCard icon={<Cpu size={14} />} title="CPU load" value={`${stats.cpuPct}%`} data={cpu} color="var(--accent)" />
+        <ChartCard icon={<MemoryStick size={14} />} title="Memory" value={`${memPct}% · ${memUsedGb} GB`} data={mem} color="#7ce0c9" />
       </div>
 
       {/* Hardware */}
@@ -122,9 +108,7 @@ export function SystemCenterView() {
           <HardRow icon={<HardDrive size={14} />} label="Architecture" value={sys.arch ?? "—"} />
         </div>
         <p className="mt-3 px-1 text-[11.5px] leading-relaxed text-frost-500">
-          {stats.platform === "web"
-            ? "This preview shows simulated readings. In the installed app, every number above is read live from your machine at user level."
-            : "All readings are read at user level — QynOne never requests elevated access."}
+          All readings are read at user level — QynOne never requests elevated access.
         </p>
       </div>
     </div>
@@ -139,19 +123,7 @@ function toneFor(pct: number): "good" | "mid" | "hot" {
   return "hot";
 }
 
-function StatCard({
-  icon,
-  label,
-  value,
-  sub,
-  tone,
-}: {
-  icon: React.ReactNode;
-  label: string;
-  value: string;
-  sub: string;
-  tone: "good" | "mid" | "hot";
-}) {
+function StatCard({ icon, label, value, sub, tone }: { icon: React.ReactNode; label: string; value: string; sub: string; tone: "good" | "mid" | "hot" }) {
   return (
     <motion.div
       initial={{ opacity: 0, y: 10 }}
@@ -160,19 +132,10 @@ function StatCard({
       className="glass rounded-2xl p-4"
     >
       <div className="flex items-center gap-2 text-[10.5px] font-semibold uppercase tracking-[0.14em] text-frost-500">
-        <span className="grid h-7 w-7 place-items-center rounded-lg border border-white/8 bg-white/4 text-frost-300">
-          {icon}
-        </span>
+        <span className="grid h-7 w-7 place-items-center rounded-lg border border-white/8 bg-white/4 text-frost-300">{icon}</span>
         {label}
       </div>
-      <p
-        className={cn(
-          "mt-3 text-[26px] font-bold tabular-nums tracking-tight",
-          tone === "good" && "text-frost-100",
-          tone === "mid" && "text-amber-200",
-          tone === "hot" && "text-rose-300",
-        )}
-      >
+      <p className={cn("mt-3 text-[26px] font-bold tabular-nums tracking-tight", tone === "good" && "text-frost-100", tone === "mid" && "text-amber-200", tone === "hot" && "text-rose-300")}>
         {value}
       </p>
       <p className="mt-0.5 truncate text-[11.5px] text-frost-500">{sub}</p>
@@ -180,19 +143,7 @@ function StatCard({
   );
 }
 
-function ChartCard({
-  icon,
-  title,
-  value,
-  data,
-  color,
-}: {
-  icon: React.ReactNode;
-  title: string;
-  value: string;
-  data: number[];
-  color: string;
-}) {
+function ChartCard({ icon, title, value, data, color }: { icon: React.ReactNode; title: string; value: string; data: number[]; color: string }) {
   const path = useMemo(() => sparkPath(data), [data]);
   const id = useRef(`grad-${Math.random().toString(36).slice(2, 8)}`).current;
 
@@ -200,9 +151,7 @@ function ChartCard({
     <div className="glass rounded-2xl p-4">
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-2 text-[12px] font-semibold uppercase tracking-[0.12em] text-frost-500">
-          <span className="grid h-7 w-7 place-items-center rounded-lg border border-white/8 bg-white/4 text-frost-300">
-            {icon}
-          </span>
+          <span className="grid h-7 w-7 place-items-center rounded-lg border border-white/8 bg-white/4 text-frost-300">{icon}</span>
           {title}
         </div>
         <span className="text-[15px] font-bold tabular-nums tracking-tight text-frost-100">{value}</span>
@@ -215,15 +164,7 @@ function ChartCard({
           </linearGradient>
         </defs>
         <path d={`${path} L 480 120 L 0 120 Z`} fill={`url(#${id})`} />
-        <path
-          d={path}
-          fill="none"
-          stroke={color}
-          strokeWidth="2"
-          strokeLinejoin="round"
-          strokeLinecap="round"
-          vectorEffect="non-scaling-stroke"
-        />
+        <path d={path} fill="none" stroke={color} strokeWidth="2" strokeLinejoin="round" strokeLinecap="round" vectorEffect="non-scaling-stroke" />
       </svg>
     </div>
   );
@@ -243,22 +184,24 @@ function sparkPath(data: number[]): string {
     .join(" ");
 }
 
-function HardRow({
-  icon,
-  label,
-  value,
-}: {
-  icon: React.ReactNode;
-  label: string;
-  value: string;
-}) {
+function HardRow({ icon, label, value }: { icon: React.ReactNode; label: string; value: string }) {
   return (
     <div className="flex items-center gap-3 bg-white/[0.015] px-4 py-3">
-      <span className="grid h-7 w-7 shrink-0 place-items-center rounded-lg border border-white/8 bg-white/4 text-frost-400">
-        {icon}
-      </span>
+      <span className="grid h-7 w-7 shrink-0 place-items-center rounded-lg border border-white/8 bg-white/4 text-frost-400">{icon}</span>
       <span className="w-32 shrink-0 text-[12px] text-frost-500">{label}</span>
       <span className="truncate text-[13px] font-semibold text-frost-100">{value}</span>
+    </div>
+  );
+}
+
+function HardwareCard({ icon, label, value }: { icon: React.ReactNode; label: string; value: string }) {
+  return (
+    <div className="glass-soft flex items-center gap-3 rounded-xl px-3.5 py-3 text-left">
+      <span className="grid h-8 w-8 shrink-0 place-items-center rounded-lg border border-white/8 bg-white/4 text-frost-400">{icon}</span>
+      <div className="min-w-0">
+        <p className="truncate text-[10.5px] uppercase tracking-[0.12em] text-frost-500">{label}</p>
+        <p className="truncate text-[13px] font-semibold text-frost-100">{value}</p>
+      </div>
     </div>
   );
 }

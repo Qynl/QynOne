@@ -100,7 +100,17 @@ function Shell() {
     if (view === "system") return <SystemCenterView />;
     if (view === "files") return <FileCenterView />;
     if (view === "tools") return <QuickToolsView />;
-    if (view === "vault") return <VaultView pendingOpen={vaultOpen} onConsumed={() => setVaultOpen(null)} />;
+    if (view === "vault")
+      return (
+        <VaultView
+          pendingOpen={vaultOpen}
+          onConsumed={() => setVaultOpen(null)}
+          onOpenFolder={openFolder}
+          onOpenWorkspace={() => {
+            setView("workspaces");
+          }}
+        />
+      );
     if (view === "settings") return <SettingsView onNavigate={navigate} />;
     if (view === "profile") return <ProfileView onNavigate={navigate} />;
     return (

@@ -372,6 +372,42 @@ ipcMain.handle("qyn:vault-root", async () => {
 
 ipcMain.handle("qyn:vault-tree", () => readVaultTree());
 
+/* Auto-rescan: watch the vault folder so the graph re-marks itself whenever
+   the .md files change — even when they're edited outside QynOne. */
+let vaultWatcher = null;
+let vaultWatchTimer = null;
+
+function startVaultWatcher() {
+  if (vaultWatcher) return;
+  const root = vaultRoot();
+  try {
+    fsPromises.mkdir(root, { recursive: true }).then(() => {
+      try {
+        vaultWatcher = fs.watch(root, { recursive: true }, () => {
+          if (vaultWatchTimer) clearTimeout(vaultWatchTimer);
+          vaultWatchTimer = setTimeout(() => {
+            for (const win of BrowserWindow.getAllWindows()) {
+              win.webContents.send("qyn:vault-changed");
+            }
+          }, 400);
+        });
+      } catch {
+        vaultWatcher = null; // recursive watch unsupported → UI polls instead
+      }
+    });
+  } catch {
+    vaultWatcher = null;
+  }
+}
+
+app.whenReady().then(() => {
+  createWindow();
+  startVaultWatcher();
+  app.on("activate", () => {
+    if (BrowserWindow.getAllWindows().length === 0) createWindow();
+  });
+});
+
 ipcMain.handle("qyn:vault-read", async (_event, rel) => {
   const full = vaultSafe(rel);
   if (!full) return null;
@@ -566,13 +602,6 @@ ipcMain.handle("qyn:save-screenshot", (_event, dataUrl) => saveScreenshot(dataUr
 /* ------------------------------------------------------------------ */
 /* App lifecycle                                                       */
 /* ------------------------------------------------------------------ */
-
-app.whenReady().then(() => {
-  createWindow();
-  app.on("activate", () => {
-    if (BrowserWindow.getAllWindows().length === 0) createWindow();
-  });
-});
 
 app.on("window-all-closed", () => {
   if (process.platform !== "darwin") app.quit();

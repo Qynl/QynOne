@@ -9,73 +9,6 @@ import { useUi } from "../components/ui";
 
 const HOME_ROOTS = ["Documents", "Downloads", "Desktop", "Pictures", "Videos", "Music"];
 
-/* ------------------------------------------------------------------ */
-/* Web-preview simulation — a tiny fake tree so the preview stays demoable */
-/* ------------------------------------------------------------------ */
-
-interface FakeEntry {
-  name: string;
-  isDir: boolean;
-  children?: FakeEntry[];
-}
-
-const FAKE_TREE: FakeEntry[] = [
-  {
-    name: "Documents",
-    isDir: true,
-    children: [
-      { name: "Project Notes.txt", isDir: false },
-      { name: "Resume 2026.pdf", isDir: false },
-      { name: "Budget 2026.xlsx", isDir: false },
-      {
-        name: "Unreal Projects",
-        isDir: true,
-        children: [
-          { name: "WorldGenerator.cpp", isDir: false },
-          { name: "Level1.umap", isDir: false },
-          { name: "Readme.md", isDir: false },
-        ],
-      },
-    ],
-  },
-  {
-    name: "Downloads",
-    isDir: true,
-    children: [
-      { name: "FC26-Setup.exe", isDir: false },
-      { name: "wallpaper-dark.jpg", isDir: false },
-      { name: "driver-update.zip", isDir: false },
-    ],
-  },
-  {
-    name: "Desktop",
-    isDir: true,
-    children: [{ name: "todo.txt", isDir: false }],
-  },
-  {
-    name: "Pictures",
-    isDir: true,
-    children: [
-      { name: "Screenshots", isDir: true, children: [{ name: "qynone-home.png", isDir: false }] },
-      { name: "Wallpapers", isDir: true, children: [] },
-    ],
-  },
-  { name: "Videos", isDir: true, children: [{ name: "clips", isDir: true, children: [] }] },
-  { name: "Music", isDir: true, children: [] },
-];
-
-function findFakeEntries(segments: string[]): FakeEntry[] {
-  let level: FakeEntry[] = FAKE_TREE;
-  for (const seg of segments) {
-    const next = level.find((e) => e.name === seg);
-    if (!next?.isDir) return [];
-    level = next.children ?? [];
-  }
-  return level;
-}
-
-/* ------------------------------------------------------------------ */
-
 export function FileCenterView() {
   const { state, actions } = useQyn();
   const { toast } = useUi();
@@ -99,19 +32,11 @@ export function FileCenterView() {
     };
   }, [bridge]);
 
-  /* Load entries whenever the directory changes. */
+  /* Load entries whenever the directory changes (desktop app only —
+     the web preview has no access to the OS, so it shows nothing fake). */
   useEffect(() => {
     if (!bridge) {
-      const segments = path ? path.split("/") : [];
-      setEntries(
-        findFakeEntries(segments).map((e) => ({
-          name: e.name,
-          path: [...segments, e.name].join("/"),
-          isDir: e.isDir,
-          size: 0,
-          mtimeMs: Date.now() - Math.round(Math.random() * 20) * 36e5,
-        })),
-      );
+      setEntries(null);
       return;
     }
     if (!path) {
@@ -130,10 +55,7 @@ export function FileCenterView() {
       .finally(() => setLoading(false));
   }, [bridge, path, home]);
 
-  const segments = useMemo(
-    () => (path ? path.split(/[\\/]/).filter(Boolean) : []),
-    [path],
-  );
+  const segments = useMemo(() => (path ? path.split(/[\\/]/).filter(Boolean) : []), [path]);
 
   const rootLabel = useCallback(
     (p: string) => {
@@ -175,6 +97,8 @@ export function FileCenterView() {
     if (!entries) return [];
     return [...entries].sort((a, b) => (a.isDir === b.isDir ? a.name.localeCompare(b.name) : a.isDir ? -1 : 1));
   }, [entries]);
+
+  const webPreview = !bridge;
 
   const favorites = state.fileFavorites;
 
@@ -270,10 +194,10 @@ export function FileCenterView() {
             )}
           </div>
 
-          {!bridge && (
+          {webPreview && (
             <p className="px-2 text-[11px] leading-relaxed text-frost-500">
-              Preview mode shows a simulated folder tree. In the installed app this browses your real Documents,
-              Downloads, Desktop and more — read-only at user level.
+              File Center reads your real folders in the installed QynOne app — read-only, user level. The web
+              preview has no access to the OS, so it shows nothing instead of a simulation.
             </p>
           )}
         </aside>
@@ -328,7 +252,16 @@ export function FileCenterView() {
 
           {/* Entries */}
           <div className="mt-3">
-            {loading ? (
+            {webPreview ? (
+              <div className="py-16 text-center">
+                <HardDrive size={26} className="mx-auto text-frost-500/50" />
+                <p className="mt-3 text-[14px] font-semibold text-frost-200">Your files live in the installed app</p>
+                <p className="mx-auto mt-1 max-w-sm text-[12.5px] leading-relaxed text-frost-500">
+                  Install QynOne on your PC and this becomes a real browser for Documents, Downloads, Desktop,
+                  Pictures and more — nothing here is simulated.
+                </p>
+              </div>
+            ) : loading ? (
               <p className="py-10 text-center text-[13px] text-frost-500">Reading directory…</p>
             ) : sorted.length === 0 ? (
               <div className="py-10 text-center">

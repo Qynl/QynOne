@@ -14,8 +14,11 @@ import {
 } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { KnowledgeGraph } from "../components/KnowledgeGraph";
-import { useUi } from "../components/ui";
+import { useLaunch, useUi } from "../components/ui";
+import { getDesktop } from "../lib/desktop";
+import { buildGraphModel } from "../lib/graph";
 import { renderMarkdown } from "../lib/markdown";
+import { useQyn } from "../lib/store";
 import { useVault } from "../lib/vault";
 import type { VaultNote } from "../lib/vault";
 import { cn } from "../lib/utils";
@@ -23,12 +26,18 @@ import { cn } from "../lib/utils";
 export function VaultView({
   pendingOpen,
   onConsumed,
+  onOpenFolder,
+  onOpenWorkspace,
 }: {
   pendingOpen: string | null;
   onConsumed: () => void;
+  onOpenFolder: (folderId: string) => void;
+  onOpenWorkspace: (wsId: string) => void;
 }) {
   const vault = useVault();
+  const { state } = useQyn();
   const { toast } = useUi();
+  const launch = useLaunch();
   const [activeId, setActiveId] = useState<string | null>(null);
   const [query, setQuery] = useState("");
   const [mode, setMode] = useState<"edit" | "preview">("edit");
@@ -40,6 +49,13 @@ export function VaultView({
   const [renameValue, setRenameValue] = useState("");
   const [draft, setDraft] = useState<string | null>(null);
   const saveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  /* Unified graph: real [[links]] + QynOne-detected relationships. */
+  const graph = useMemo(
+    () =>
+      buildGraphModel(vault.notes, vault.graphEdges, state.apps, state.folders, state.workspaces, state.fileFavorites),
+    [vault.notes, vault.graphEdges, state.apps, state.folders, state.workspaces, state.fileFavorites],
+  );
 
   /* ---- open a note requested from elsewhere (AI, home, graph) ---- */
   useEffect(() => {
@@ -531,10 +547,35 @@ export function VaultView({
       <AnimatePresence>
         {graphOpen && (
           <KnowledgeGraph
-            notes={vault.notes}
-            edges={vault.graphEdges}
+            nodes={graph.nodes}
+            edges={graph.edges}
             onOpenNote={(name) => {
               openNoteByName(name);
+              setGraphOpen(false);
+            }}
+            onLaunchApp={(appId) => {
+              const app = state.apps.find((a) => a.id === appId);
+              if (app) launch(app);
+              setGraphOpen(false);
+            }}
+            onOpenFolder={(folderId) => {
+              setGraphOpen(false);
+              onOpenFolder(folderId);
+            }}
+            onOpenWorkspace={(wsId) => {
+              setGraphOpen(false);
+              onOpenWorkspace(wsId);
+            }}
+            onOpenPath={(p) => {
+              const bridge = getDesktop();
+              if (bridge) {
+                void bridge.openPath(p).then((res) => {
+                  if (res.ok) toast("Opening…");
+                  else toast(res.error ? `Couldn’t open — ${res.error}` : "Couldn’t open", { icon: <X size={15} className="text-amber-300" /> });
+                });
+              } else {
+                toast(`In the installed app this opens ${p}`);
+              }
               setGraphOpen(false);
             }}
             onClose={() => setGraphOpen(false)}

@@ -42,6 +42,12 @@ contextBridge.exposeInMainWorld("qynDesktop", {
   vaultRename: (oldRel, newRel) => ipcRenderer.invoke("qyn:vault-rename", oldRel, newRel),
   vaultDelete: (rel) => ipcRenderer.invoke("qyn:vault-delete", rel),
   vaultMkdir: (rel) => ipcRenderer.invoke("qyn:vault-mkdir", rel),
+  /* Auto-rescan — the main process watches the vault folder and notifies. */
+  onVaultChanged: (cb) => {
+    const listener = () => cb();
+    ipcRenderer.on("qyn:vault-changed", listener);
+    return () => ipcRenderer.removeListener("qyn:vault-changed", listener);
+  },
 
   /* AI configuration — qynone.env in the user data folder */
   aiConfigGet: () => ipcRenderer.invoke("qyn:ai-config-get"),

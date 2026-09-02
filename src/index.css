@@ -90,7 +90,7 @@ textarea {
    .glass-strong floating panels/overlays (blur 36) */
 
 .glass {
-  background: rgba(255, 255, 255, 0.045);
+  background: rgba(13, 21, 38, 0.5);
   border: 1px solid rgba(255, 255, 255, 0.08);
   backdrop-filter: blur(16px) saturate(150%);
   -webkit-backdrop-filter: blur(16px) saturate(150%);
@@ -100,7 +100,7 @@ textarea {
 }
 
 .glass-soft {
-  background: rgba(255, 255, 255, 0.035);
+  background: rgba(11, 18, 33, 0.42);
   border: 1px solid rgba(255, 255, 255, 0.07);
   backdrop-filter: blur(12px) saturate(140%);
   -webkit-backdrop-filter: blur(12px) saturate(140%);
