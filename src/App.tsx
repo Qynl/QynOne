@@ -18,7 +18,6 @@ import { cn } from "./lib/utils";
 import { Backdrop } from "./components/Backdrop";
 import { BootScreen } from "./components/BootScreen";
 import { CommandPalette } from "./components/CommandPalette";
-import { Sidebar } from "./components/Sidebar";
 import { TopBar } from "./components/TopBar";
 import { UiProvider } from "./components/ui";
 import { AiProvider } from "./lib/ai";
@@ -136,25 +135,21 @@ function Shell() {
         <div className="relative z-10 flex h-full min-h-0 flex-col">
           <TopBar onOpenPalette={() => setPaletteOpen(true)} onHome={() => navigate("home")} />
 
-          <div className="flex min-h-0 flex-1">
-            <Sidebar view={view} onNavigate={navigate} />
+          {/* Views transition softly between each other */}
+          <AnimatePresence mode="wait" initial={false}>
+            <motion.div
+              key={`${view}-${view === "folders" ? (folderId ?? "all") : view === "vault" ? (vaultOpen ?? "none") : "view"}`}
+              exit={{ opacity: 0, y: -8 }}
+              transition={{ duration: 0.16, ease: [0.22, 1, 0.36, 1] }}
+              className="accent-scroll min-h-0 min-w-0 flex-1 overflow-y-auto"
+            >
+              {renderView()}
+            </motion.div>
+          </AnimatePresence>
 
-            {/* Views transition softly between each other */}
-            <AnimatePresence mode="wait" initial={false}>
-              <motion.div
-                key={`${view}-${view === "folders" ? (folderId ?? "all") : view === "vault" ? (vaultOpen ?? "none") : "view"}`}
-                exit={{ opacity: 0, y: -8 }}
-                transition={{ duration: 0.16, ease: [0.22, 1, 0.36, 1] }}
-                className="accent-scroll min-w-0 flex-1 overflow-y-auto pb-24 md:pb-0"
-              >
-                {renderView()}
-              </motion.div>
-            </AnimatePresence>
-          </div>
+          {/* Bottom navigation — the whole nav lives here */}
+          <BottomDock view={view} onNavigate={navigate} />
         </div>
-
-        {/* Mobile bottom navigation — always get back to main */}
-        <MobileNav view={view} onNavigate={navigate} />
 
         {/* Search overlay */}
         <AnimatePresence>
@@ -177,7 +172,7 @@ function Shell() {
 /* Mobile bottom navigation                                            */
 /* ------------------------------------------------------------------ */
 
-const MOBILE_NAV: Array<{ id: ViewId; label: string; icon: LucideIcon }> = [
+const DOCK_NAV: Array<{ id: ViewId; label: string; icon: LucideIcon }> = [
   { id: "home", label: "Home", icon: Home },
   { id: "apps", label: "Apps", icon: LayoutGrid },
   { id: "folders", label: "Folders", icon: FolderOpen },
@@ -191,23 +186,27 @@ const MOBILE_NAV: Array<{ id: ViewId; label: string; icon: LucideIcon }> = [
   { id: "settings", label: "Settings", icon: SlidersHorizontal },
 ];
 
-function MobileNav({ view, onNavigate }: { view: ViewId; onNavigate: (v: ViewId) => void }) {
+function BottomDock({ view, onNavigate }: { view: ViewId; onNavigate: (v: ViewId) => void }) {
   return (
-    <nav className="glass-deep no-scrollbar fixed inset-x-3 bottom-3 z-40 flex items-stretch gap-1 overflow-x-auto rounded-2xl px-2 py-1.5 md:hidden">
-      {MOBILE_NAV.map((item) => {
+    <nav className="no-scrollbar flex h-[64px] shrink-0 items-center gap-0.5 overflow-x-auto border-t border-white/5 bg-[rgba(6,9,17,0.55)] px-2 backdrop-blur-2xl">
+      {DOCK_NAV.map((item) => {
         const active = view === item.id;
         const Icon = item.icon;
         return (
           <button
             key={item.id}
             onClick={() => onNavigate(item.id)}
+            title={item.label}
             className={cn(
-              "flex min-w-[54px] shrink-0 flex-col items-center gap-1 rounded-xl px-2.5 py-1.5 transition",
-              active ? "bg-accent-soft text-accent" : "text-frost-500 hover:bg-white/5 hover:text-frost-200",
+              "relative flex min-w-[62px] shrink-0 flex-1 flex-col items-center justify-center gap-1 rounded-xl px-1 py-1.5 transition-colors",
+              active ? "text-frost-100" : "text-frost-600 hover:bg-white/[0.04] hover:text-frost-300",
             )}
           >
-            <Icon size={17} strokeWidth={active ? 2.2 : 1.8} />
-            <span className="text-[9.5px] font-semibold">{item.label}</span>
+            {active && (
+              <motion.span layoutId="dock-active" className="absolute top-0 h-[2px] w-6 rounded-full bg-[var(--accent)]" />
+            )}
+            <Icon size={19} strokeWidth={active ? 2.2 : 1.7} className={active ? "text-accent drop-shadow-[0_0_10px_var(--accent-glow)]" : ""} />
+            <span className={cn("text-[9px] font-medium leading-none", active ? "font-semibold text-frost-100" : "")}>{item.label}</span>
           </button>
         );
       })}

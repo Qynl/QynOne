@@ -19,15 +19,14 @@ export function HomeView() {
   const [note, setNote] = useState<string | null>(null);
   const noteTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  /* Eye size fills the stage but never overflows the viewport (no scroll). */
-  const [eyeSize, setEyeSize] = useState(200);
+  /* Eyes dominate the stage — as big as the window allows, no scroll. */
+  const [eyeSize, setEyeSize] = useState(340);
   useEffect(() => {
     const fit = () => {
       const w = window.innerWidth;
       const h = window.innerHeight;
-      const byW = Math.max(0, w - 380);
-      const byH = Math.max(120, h - 300);
-      setEyeSize(Math.round(Math.min(230, Math.max(130, Math.min(byW * 0.34, byH * 0.34)))));
+      const size = Math.min(480, Math.max(240, Math.min(w * 0.62, h * 0.5)));
+      setEyeSize(Math.round(size));
     };
     fit();
     window.addEventListener("resize", fit);
@@ -159,7 +158,7 @@ export function HomeView() {
       </div>
 
       {/* ---- Quiet one-line reply (fades) ---- */}
-      <div className="pointer-events-none absolute inset-x-0 bottom-20 flex justify-center px-6 md:bottom-8">
+      <div className="pointer-events-none absolute inset-x-0 bottom-5 flex justify-center px-6">
         <AnimatePresence>
           {note && (
             <motion.div
