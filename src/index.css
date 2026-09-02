@@ -1,0 +1,181 @@
+@import "tailwindcss";
+
+@theme {
+  --font-sans:
+    "Inter", "Segoe UI", ui-sans-serif, system-ui, -apple-system, "Helvetica Neue", Arial,
+    sans-serif;
+
+  /* Deep ink surfaces — cool navy blacks */
+  --color-ink-950: #04070d;
+  --color-ink-900: #070c16;
+  --color-ink-850: #0a1120;
+  --color-ink-800: #0e1729;
+  --color-ink-700: #16223a;
+  --color-ink-600: #1e2d4d;
+
+  /* Frost text — cool, desaturated blues */
+  --color-frost-100: #e9effa;
+  --color-frost-200: #cdd9ef;
+  --color-frost-300: #a8badb;
+  --color-frost-400: #7e93ba;
+  --color-frost-500: #5d7198;
+  --color-frost-600: #43557a;
+}
+
+:root {
+  --accent: #5b8cff;
+  --accent-soft: rgba(91, 140, 255, 0.13);
+  --accent-glow: rgba(91, 140, 255, 0.28);
+  --wallpaper-1: #0b1428;
+  --wallpaper-2: #060a15;
+}
+
+* {
+  border-color: rgba(255, 255, 255, 0.08);
+}
+
+html,
+body,
+#root {
+  height: 100%;
+}
+
+body {
+  margin: 0;
+  background: var(--wallpaper-2);
+  color: var(--color-frost-100);
+  font-family: var(--font-sans);
+  font-feature-settings: "cv11", "ss01";
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+  overflow: hidden;
+  user-select: none;
+}
+
+input,
+textarea {
+  user-select: text;
+}
+
+::selection {
+  background: var(--accent-soft);
+  color: #fff;
+}
+
+/* ---- Scrollbars ---- */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: rgba(255, 255, 255, 0.14) transparent;
+}
+*::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+*::-webkit-scrollbar-track {
+  background: transparent;
+}
+*::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.12);
+  border-radius: 999px;
+}
+*::-webkit-scrollbar-thumb:hover {
+  background: rgba(255, 255, 255, 0.22);
+}
+
+/* ---- Glass layers ----
+   Layered transparency + blur create depth:
+   .glass        main content cards    (blur 16)
+   .glass-soft   tiles inside cards    (blur 12)
+   .glass-deep   sidebar / chrome      (blur 24)
+   .glass-strong floating panels/overlays (blur 36) */
+
+.glass {
+  background: rgba(255, 255, 255, 0.045);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  backdrop-filter: blur(16px) saturate(150%);
+  -webkit-backdrop-filter: blur(16px) saturate(150%);
+  box-shadow:
+    0 1px 0 rgba(255, 255, 255, 0.04) inset,
+    0 12px 40px -16px rgba(2, 6, 18, 0.7);
+}
+
+.glass-soft {
+  background: rgba(255, 255, 255, 0.035);
+  border: 1px solid rgba(255, 255, 255, 0.07);
+  backdrop-filter: blur(12px) saturate(140%);
+  -webkit-backdrop-filter: blur(12px) saturate(140%);
+  box-shadow: 0 1px 0 rgba(255, 255, 255, 0.03) inset;
+}
+
+.glass-deep {
+  background: rgba(11, 18, 33, 0.55);
+  border: 1px solid rgba(255, 255, 255, 0.07);
+  backdrop-filter: blur(24px) saturate(160%);
+  -webkit-backdrop-filter: blur(24px) saturate(160%);
+  box-shadow:
+    0 1px 0 rgba(255, 255, 255, 0.05) inset,
+    0 20px 60px -20px rgba(0, 0, 0, 0.75);
+}
+
+.glass-strong {
+  background: rgba(15, 22, 40, 0.82);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  backdrop-filter: blur(36px) saturate(170%);
+  -webkit-backdrop-filter: blur(36px) saturate(170%);
+  box-shadow:
+    0 1px 0 rgba(255, 255, 255, 0.06) inset,
+    0 32px 90px -24px rgba(0, 0, 0, 0.85);
+}
+
+/* ---- Accent helpers ---- */
+.text-accent {
+  color: var(--accent);
+}
+.bg-accent {
+  background: var(--accent);
+}
+.bg-accent-soft {
+  background: var(--accent-soft);
+}
+.border-accent-soft {
+  border-color: color-mix(in srgb, var(--accent) 26%, transparent);
+}
+.glow-accent {
+  box-shadow:
+    0 0 0 1px color-mix(in srgb, var(--accent) 24%, transparent),
+    0 10px 34px -10px var(--accent-glow);
+}
+.accent-scroll {
+  scrollbar-color: color-mix(in srgb, var(--accent) 45%, transparent) transparent;
+}
+
+.kbd {
+  font-family: var(--font-sans);
+  font-size: 10px;
+  line-height: 1;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  color: var(--color-frost-300);
+  background: rgba(255, 255, 255, 0.07);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 5px;
+  padding: 4px 6px;
+  box-shadow: 0 1px 0 rgba(255, 255, 255, 0.08) inset;
+}
+
+/* Subtle grid texture behind everything */
+.wall-grid {
+  background-image:
+    linear-gradient(rgba(255, 255, 255, 0.025) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(255, 255, 255, 0.025) 1px, transparent 1px);
+  background-size: 56px 56px;
+  mask-image: radial-gradient(ellipse 90% 70% at 50% 0%, black 30%, transparent 78%);
+  -webkit-mask-image: radial-gradient(ellipse 90% 70% at 50% 0%, black 30%, transparent 78%);
+}
+
+.no-scrollbar::-webkit-scrollbar {
+  display: none;
+}
+.no-scrollbar {
+  scrollbar-width: none;
+}

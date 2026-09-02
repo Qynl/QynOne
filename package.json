@@ -1,0 +1,62 @@
+{
+  "name": "qynone",
+  "productName": "QynOne",
+  "description": "QynOne — the place your PC starts. A virtual command center for your applications, games, projects and tools.",
+  "author": "QynOne",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "main": "electron/main.cjs",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "typecheck": "tsc -b --noEmit",
+    "preview": "vite preview",
+    "desktop": "electron .",
+    "dist:win": "vite build && electron-builder --win"
+  },
+  "build": {
+    "appId": "com.qynone.app",
+    "productName": "QynOne",
+    "directories": {
+      "output": "release"
+    },
+    "files": ["dist/**", "electron/**"],
+    "asar": true,
+    "npmRebuild": false,    "win": {
+      "target": [
+        { "target": "nsis", "arch": ["x64"] },
+        { "target": "portable", "arch": ["x64"] }
+      ]
+    },
+    "nsis": {
+      "artifactName": "QynOne-Setup-${version}-${arch}.${ext}",
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true,
+      "perMachine": false,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true
+    },
+    "portable": {
+      "artifactName": "QynOne-Portable-${version}-${arch}.${ext}"
+    }
+  },
+  "dependencies": {
+    "framer-motion": "^13.2.0",
+    "lucide-react": "^1.39.0",
+    "react": "^19.2.8",
+    "react-dom": "^19.2.8"
+  },
+  "devDependencies": {
+    "@tailwindcss/vite": "^4.3.3",
+    "@types/node": "^26.4.1",
+    "@types/react": "^19.2.18",
+    "@types/react-dom": "^19.2.5",
+    "@vitejs/plugin-react": "^6.1.1",
+    "electron": "^44.1.1",
+    "electron-builder": "^26.15.3",
+    "tailwindcss": "^4.3.3",
+    "typescript": "^7.0.2",
+    "vite": "^8.2.2"
+  }
+}
