@@ -649,6 +649,38 @@ export function AiProvider({
           return "Opened the calendar.";
         },
       },
+      {
+        name: "screenshot",
+        usage: "/screenshot",
+        description: "Take a screenshot of the screen and save it to the Pictures\\QynOne folder.",
+        parameters: { type: "object", properties: {} },
+        run: async () => {
+          const bridge = getDesktop();
+          if (!bridge) return "Screenshots need the QynOne desktop app — this preview can't capture the screen.";
+          const cap = await bridge.captureScreen();
+          if (!cap) return "I couldn't capture the screen right now.";
+          const res = await bridge.saveScreenshot(cap);
+          return res.ok ? `Saved a screenshot${res.path ? ` to ${res.path}` : ""}.` : `Screenshot failed: ${res.error ?? "unknown error"}.`;
+        },
+      },
+      {
+        name: "note",
+        usage: "/note <text>",
+        description: "Save a quick voice note (goes into the Quick Tools notes pad).",
+        parameters: {
+          type: "object",
+          properties: { text: { type: "string", description: "the note to remember" } },
+          required: ["text"],
+        },
+        run: (args) => {
+          const text = String(args.text ?? "").trim();
+          if (!text) return "There's nothing to note.";
+          const stamp = new Date().toLocaleString(undefined, { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" });
+          const line = `[${stamp}] ${text}`;
+          actions.setNotes(state.notes ? `${state.notes}\n${line}` : line);
+          return `Noted.`;
+        },
+      },
     ];
   }, [state, vault, launch, onNavigate, onOpenFolder, onOpenNote, actions]);
 

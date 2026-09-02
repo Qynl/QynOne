@@ -124,14 +124,7 @@ function Shell() {
       );
     if (view === "settings") return <SettingsView onNavigate={navigate} />;
     if (view === "profile") return <ProfileView onNavigate={navigate} />;
-    return (
-      <HomeView
-        onNavigate={navigate}
-        onOpenFolder={openFolder}
-        onOpenPalette={() => setPaletteOpen(true)}
-        onOpenNote={openVaultNote}
-      />
-    );
+    return <HomeView />;
   };
 
   return (
@@ -144,7 +137,7 @@ function Shell() {
           <TopBar onOpenPalette={() => setPaletteOpen(true)} onHome={() => navigate("home")} />
 
           <div className="flex min-h-0 flex-1">
-            <Sidebar view={view} onNavigate={navigate} onOpenFolder={openFolder} />
+            <Sidebar view={view} onNavigate={navigate} />
 
             {/* Views transition softly between each other */}
             <AnimatePresence mode="wait" initial={false}>

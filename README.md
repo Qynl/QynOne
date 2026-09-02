@@ -11,21 +11,25 @@ broken.
 > **The north star:** you open QynOne once, and you stop thinking about the Windows desktop entirely.
 > "Why would I even use the desktop anymore?"
 
-## What's in QynOne 2.2
+## What's in QynOne 2.3
 
-- **Nex — a real AI assistant that is just two eyes.** On Home, the centerpiece is a pair of bare, rectangular
-  white eyes — no face, no panel, no text around them. Those eyes *are* the assistant: they express more than
-  40 distinct emotions (idle, awake, listening, thinking, working, happy, joyful, laughing, love, party,
-  celebrating, excited, proud, grateful, calm, determined, curious, focused, playful, winking, shy, surprised,
-  shocked, sad, crying, worried, scared, confused, angry, sleepy, sleeping, tired, sick, zoned, searching,
-  offline, yes/no nodding, sorry, concerned…) — each with its own eye shape, gaze, tilt, glow, blink rhythm and
-  floating effects: sparkles, stars, hearts, tears, sweat, zzz, pulsing rings and confetti.
-- **Hands-free wake word.** Tap the mic and say **"Nex"** — the eyes light up, then you just talk: *"Nex, open
-  VS Code"*, *"Nex, what's next today?"*. Nex answers out loud. Typing still works the same; type `/` to see its
-  tools and use them directly.
+- **Home is just Nex.** Open QynOne and there is nothing else: the time, the date, and two bare rectangular
+  **white** eyes floating in the dark — no face, no pupil, no panel, no cards, no scrolling. Those eyes *are*
+  the assistant: more than 40 emotions (idle, listening, thinking, working, happy, joyful, laughing, love,
+  party, celebrating, excited, proud, curious, focused, playful, winking, shy, surprised, shocked, sad,
+  crying, worried, scared, confused, angry, sleepy, sleeping, tired, sick, zoned, searching, offline, yes/no
+  nodding, sorry, concerned…) expressed purely through eye shape, openness, lean, tilt, glow, blink rhythm and
+  floating effects: sparkles, stars, hearts, tears, sweat, zzz, pulsing rings and confetti. Everything else in
+  the app sits behind the most minimal chrome possible — a quiet top strip and a slim sidebar.
+- **Hands-free wake word.** Tap the mic (or click the eyes) and say **"Nex"** — the eyes ring and light up,
+  then you just talk: *"Nex, open VS Code"*, *"Nex, what's next today?"*, *"Nex, take a screenshot"*. Nex
+  answers out loud; a short quiet line of what he said appears and fades on its own. Press Ctrl+K and type a
+  question in plain words — when nothing matches, "Ask Nex" hands it to him.
+- **Nex controls all of QynOne.** Through voice or the command palette Nex can open every view and profile/settings,
+  launch real apps and workspaces, open virtual folders, read your PC stats, take screenshots, save notes, search
+  and manage your Markdown vault, and read/write your calendar.
 - **A full working Calendar** that Nex knows about. Month grid, day view, add/edit/delete events and to-dos
-  (with times, or all-day), done-checking, upcoming and **missed** lists. Home shows **What's next** under a live
-  clock with today's events, tomorrow, and anything you missed. Nex can read and manage the calendar by voice or
+  (with times, or all-day), done-checking, upcoming and **missed** lists. Nex can read and manage it by voice or
   text: `/calendar-today`, `/calendar-add "gym" tomorrow 18:00`, `/calendar-next`, `/calendar-done`. Everything
   is stored locally in your QynOne state file.
 - **Boot animation** — on launch, Nex opens his eyes on a loading screen before the app fades in.
@@ -48,13 +52,9 @@ broken.
     nodes, search, and filtering by type/folder/orphans.
   - Markdown editing with a live preview, tags (`#project`), full vault search, folders, and unresolved-link
     creation.
-- **Redesigned Home** — a darker, cleaner command center in deep blue-gray-black. A **Now panel** (big live clock,
-  date, What's next, missed items, notifications) sits beside the **Nex eyes stage** — the bare rectangular eyes
-  alone, with a slim voice/text input beneath — and compact PC-status, quick-launch, folders, knowledge and
-  workspace cards below. The library
-  starts empty and honest — every tile is something you actually added.
-- **Customizable Home** — your widgets (PC status, quick-launch dock, virtual folders, environment snapshot) can be
-  dragged to reorder or hidden — everything on Home is *yours*.
+- **Minimal interface everywhere** — deep blue-gray-black surfaces, one quiet top strip and a slim sidebar; every
+  view keeps the same calm, breathing visual language. Nothing on Home is decorative — the eyes are the product.
+  The library starts empty and honest — every tile anywhere is something you actually added.
 - **Workspaces** — bundle the apps for one part of your life (Development, Gaming, School…) and **launch them all at
   once**. QynOne remembers the setup; a workspace is pure metadata, the real apps open in place.
 - **System Center** — a beautiful replacement for Task Manager: live CPU & memory charts, stat cards, uptime, and

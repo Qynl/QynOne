@@ -2,7 +2,7 @@ import { BatteryCharging, BatteryMedium, Search } from "lucide-react";
 import { useEffect, useState } from "react";
 import { useQyn } from "../lib/store";
 import { useSystemInfo } from "../lib/system";
-import { clockTime, prettyToday } from "../lib/utils";
+import { clockTime } from "../lib/utils";
 import { NotificationCenter } from "./NotificationCenter";
 
 export function TopBar({ onOpenPalette, onHome }: { onOpenPalette: () => void; onHome: () => void }) {
@@ -15,68 +15,50 @@ export function TopBar({ onOpenPalette, onHome }: { onOpenPalette: () => void; o
     return () => clearInterval(t);
   }, []);
 
-  const showClock = state.settings.clock;
   const showBattery = state.settings.battery && sys.battery !== null;
   const pct = sys.battery ? Math.round(sys.battery.level * 100) : 0;
 
   return (
-    <header className="flex h-[62px] shrink-0 items-center gap-4 border-b border-white/6 bg-white/[0.02] px-5 md:px-7">
-      {/* Mobile brand — takes you home */}
-      <div className="md:hidden">
-        <button
-          onClick={onHome}
-          className="rounded-lg px-1 py-1 text-[15px] font-bold tracking-tight text-frost-100 transition hover:text-accent"
-        >
-          QynOne
-        </button>
-      </div>
+    <header className="flex h-12 shrink-0 items-center justify-between gap-4 border-b border-white/5 px-4 md:px-6">
+      {/* Mobile brand */}
+      <button
+        onClick={onHome}
+        className="rounded-lg px-1 text-[14px] font-bold tracking-tight text-frost-100 transition hover:text-accent md:hidden"
+      >
+        QynOne
+      </button>
 
-      {/* Search pill */}
-      <div className="flex min-w-0 flex-1 justify-center">
-        <button
-          onClick={onOpenPalette}
-          className="group flex h-9 w-full max-w-xl items-center gap-2.5 rounded-full border border-white/8 bg-white/4 px-4 text-left transition-all duration-200 hover:border-[color-mix(in_srgb,var(--accent)_35%,transparent)] hover:bg-white/6"
-        >
-          <Search size={15} className="shrink-0 text-frost-500 transition group-hover:text-accent" />
-          <span className="min-w-0 flex-1 truncate text-[13px] text-frost-500">
-            Search apps, folders, actions…
-          </span>
-          <span className="kbd hidden sm:inline-flex">Ctrl&nbsp;K</span>
-        </button>
-      </div>
+      {/* Time — quiet, small */}
+      {state.settings.clock && (
+        <div className="hidden min-w-0 items-baseline gap-2 md:flex">
+          <p className="text-[12.5px] font-semibold tabular-nums tracking-tight text-frost-300">{time}</p>
+        </div>
+      )}
+
+      <div className="min-w-0 flex-1" />
 
       {/* Right cluster */}
-      <div className="flex shrink-0 items-center gap-3">
-        <NotificationCenter />
+      <div className="flex shrink-0 items-center gap-1.5">
+        <button
+          onClick={onOpenPalette}
+          title="Search (Ctrl+K)"
+          className="grid h-8 w-8 place-items-center rounded-full text-frost-500 transition hover:bg-white/6 hover:text-frost-100"
+        >
+          <Search size={15} />
+        </button>
         {showBattery && (
           <div
-            className={`flex items-center gap-1.5 rounded-full border px-2.5 py-1.5 text-[12px] font-medium ${
-              pct <= 20
-                ? "border-red-400/25 bg-red-400/10 text-red-200"
-                : "border-white/8 bg-white/4 text-frost-300"
+            className={`flex items-center gap-1 rounded-full px-2 py-1 text-[11px] font-medium tabular-nums ${
+              pct <= 20 ? "text-red-300" : "text-frost-400"
             }`}
             title={sys.battery?.charging ? "Charging" : "On battery"}
           >
-            {sys.battery?.charging ? (
-              <BatteryCharging size={13} className="text-accent" />
-            ) : (
-              <BatteryMedium size={13} />
-            )}
-            <span className="tabular-nums">{pct}%</span>
+            {sys.battery?.charging ? <BatteryCharging size={13} className="text-accent" /> : <BatteryMedium size={13} />}
+            {pct}
           </div>
         )}
-        {showClock && (
-          <div className="hidden text-right leading-tight sm:block">
-            <p className="text-[13.5px] font-semibold tabular-nums tracking-tight text-frost-100">
-              {time}
-            </p>
-            <p className="text-[10.5px] font-medium text-frost-500">{prettyToday()}</p>
-          </div>
-        )}
-        <div className="hidden items-center gap-1.5 rounded-full border border-emerald-400/20 bg-emerald-400/8 px-2.5 py-1.5 sm:flex">
-          <span className="h-1.5 w-1.5 rounded-full bg-emerald-400 shadow-[0_0_6px_rgba(52,211,153,0.9)]" />
-          <span className="text-[11.5px] font-medium text-emerald-200/90">ready</span>
-        </div>
+        <span className="mx-1 h-1.5 w-1.5 rounded-full bg-emerald-400/80 shadow-[0_0_6px_rgba(52,211,153,0.7)]" />
+        <NotificationCenter />
       </div>
     </header>
   );

@@ -12,9 +12,11 @@ import {
   Plus,
   Search,
   SlidersHorizontal,
+  Sparkles,
   User,
 } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
+import { useAi } from "../lib/ai";
 import { getDesktop } from "../lib/desktop";
 import type { SearchHit } from "../lib/desktop";
 import { useQyn } from "../lib/store";
@@ -61,6 +63,7 @@ export function CommandPalette({
   const { state } = useQyn();
   const vault = useVault();
   const { openAddApp, openFolderModal } = useUi();
+  const { send, busy: nexBusy } = useAi();
   const launch = useLaunch();
   const bridge = getDesktop();
   const [query, setQuery] = useState("");
@@ -307,8 +310,28 @@ export function CommandPalette({
           : [],
       );
 
-    return [...actions, ...folders, ...workspaces, ...notes, ...files, ...apps];
-  }, [query, fileHits, state, vault, onClose, onNavigate, onOpenFolder, onOpenNote, launch, openAddApp, openFolderModal, bridge]);
+    const all = [...actions, ...folders, ...workspaces, ...notes, ...files, ...apps];
+
+    /* Nothing found + a real question typed → let Nex answer it. */
+    const trimmed = query.trim();
+    if (trimmed.length >= 3 && all.length === 0) {
+      return [
+        {
+          key: "ask-nex",
+          group: "Actions" as const,
+          icon: <ActionGlyph><Sparkles size={15} /></ActionGlyph>,
+          label: nexBusy ? `Nex is thinking…` : `Ask Nex: “${trimmed.length > 60 ? trimmed.slice(0, 60) + "…" : trimmed}”`,
+          hint: nexBusy ? undefined : "Natural language — Nex can act across all of QynOne",
+          run: () => {
+            if (nexBusy) return;
+            onClose();
+            void send(trimmed, { voice: true });
+          },
+        },
+      ];
+    }
+    return all;
+  }, [query, fileHits, state, vault, onClose, onNavigate, onOpenFolder, onOpenNote, launch, openAddApp, openFolderModal, bridge, send, nexBusy]);
 
   useEffect(() => {
     setSelected((s) => Math.max(0, Math.min(s, results.length - 1)));
@@ -361,7 +384,7 @@ export function CommandPalette({
                   onClose();
                 }
               }}
-              placeholder="Search apps, files, folders, actions…"
+              placeholder="Search… or ask Nex anything (Ctrl+K)"
               className="min-w-0 flex-1 bg-transparent text-[15px] text-frost-100 outline-none placeholder:text-frost-500/70"
             />
             <span className="kbd shrink-0">esc</span>
@@ -373,17 +396,8 @@ export function CommandPalette({
               <div className="px-4 py-10 text-center">
                 <p className="text-[14px] font-medium text-frost-300">Nothing found</p>
                 <p className="mt-1 text-[12.5px] text-frost-500">
-                  Try a different name — or add {query.trim() ? `“${query.trim()}”` : "it"} as a new application.
+                  Try a different name — or press Ctrl+K and ask me in plain words.
                 </p>
-                <button
-                  onClick={() => {
-                    onClose();
-                    openAddApp();
-                  }}
-                  className="mt-4 inline-flex h-9 items-center gap-2 rounded-xl bg-accent-soft px-4 text-[13px] font-semibold text-frost-100 transition hover:bg-[color-mix(in_srgb,var(--accent)_24%,transparent)]"
-                >
-                  <Plus size={14} /> Add application
-                </button>
               </div>
             )}
 
