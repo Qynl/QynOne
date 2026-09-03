@@ -11,20 +11,25 @@ import {
   SlidersHorizontal,
   User,
   Wrench,
+  Sparkles,
 } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
 import { useEffect, useState } from "react";
 import { cn } from "./lib/utils";
 import { Backdrop } from "./components/Backdrop";
+import { FloatNex } from "./components/FloatNex";
 import { BootScreen } from "./components/BootScreen";
 import { CommandPalette } from "./components/CommandPalette";
 import { TopBar } from "./components/TopBar";
+import { NexPresence } from "./components/NexPresence";
 import { UiProvider } from "./components/ui";
 import { AiProvider } from "./lib/ai";
+import { isFloatMode } from "./lib/desktop";
 import { QynProvider, useQyn } from "./lib/store";
 import { ACCENTS, WALLPAPERS } from "./lib/theme";
 import type { ViewId } from "./lib/types";
 import { VaultProvider } from "./lib/vault";
+import { AiView } from "./views/AiView";
 import { AllAppsView } from "./views/AllAppsView";
 import { CalendarView } from "./views/CalendarView";
 import { FileCenterView } from "./views/FileCenterView";
@@ -37,7 +42,24 @@ import { SystemCenterView } from "./views/SystemCenterView";
 import { VaultView } from "./views/VaultView";
 import { WorkspacesView } from "./views/WorkspacesView";
 
+const noop = () => {};
+
 export default function App() {
+  /* The floating Nex companion window reuses this same bundle with a #float
+     hash — it renders only the eyes on a transparent, always-on-top window. */
+  if (isFloatMode()) {
+    return (
+      <QynProvider>
+        <UiProvider>
+          <VaultProvider>
+            <AiProvider onNavigate={noop} onOpenFolder={noop} onOpenNote={noop}>
+              <FloatNex />
+            </AiProvider>
+          </VaultProvider>
+        </UiProvider>
+      </QynProvider>
+    );
+  }
   return (
     <QynProvider>
       <UiProvider>
@@ -55,11 +77,12 @@ function Shell() {
   const [folderId, setFolderId] = useState<string | null>(null);
   const [vaultOpen, setVaultOpen] = useState<string | null>(null);
   const [paletteOpen, setPaletteOpen] = useState(false);
-  const [booted, setBooted] = useState(false);
+  const [phase, setPhase] = useState<"boot" | "ready">("boot");
 
-  /* Boot animation — Nex opens his eyes, then the app fades in. */
+  /* Boot animation — Nex opens his eyes while the bar fills, then the
+     screen vanishes instantly and QynOne is there. No fade, no pause. */
   useEffect(() => {
-    const t = setTimeout(() => setBooted(true), 1900);
+    const t = setTimeout(() => setPhase("ready"), 2050);
     return () => clearTimeout(t);
   }, []);
 
@@ -103,6 +126,7 @@ function Shell() {
   };
 
   const renderView = () => {
+    if (view === "ai") return <AiView onNavigate={navigate} />;
     if (view === "apps") return <AllAppsView />;
     if (view === "folders") return <FoldersView activeFolderId={folderId} onSelectFolder={setFolderId} onNavigate={navigate} />;
     if (view === "workspaces") return <WorkspacesView onNavigate={navigate} />;
@@ -110,25 +134,17 @@ function Shell() {
     if (view === "files") return <FileCenterView />;
     if (view === "tools") return <QuickToolsView />;
     if (view === "calendar") return <CalendarView />;
-    if (view === "vault")
-      return (
-        <VaultView
-          pendingOpen={vaultOpen}
-          onConsumed={() => setVaultOpen(null)}
-          onOpenFolder={openFolder}
-          onOpenWorkspace={() => {
-            setView("workspaces");
-          }}
-        />
-      );
+    if (view === "vault") return <VaultView pendingOpen={vaultOpen} onConsumed={() => setVaultOpen(null)} />;
     if (view === "settings") return <SettingsView onNavigate={navigate} />;
     if (view === "profile") return <ProfileView onNavigate={navigate} />;
-    return <HomeView />;
+    return <HomeView onNavigate={navigate} />;
   };
 
   return (
     <AiProvider onNavigate={(v) => navigate(v as ViewId)} onOpenFolder={openFolder} onOpenNote={openVaultNote}>
-      <BootScreen done={booted} />
+      {/* Loading screen — the only pre-app screen. It unmounts the moment
+          the bar is full, so Home is simply there. */}
+      {phase === "boot" && <BootScreen />}
       <div className="relative flex h-full flex-col overflow-hidden">
         <Backdrop />
 
@@ -146,6 +162,9 @@ function Shell() {
               {renderView()}
             </motion.div>
           </AnimatePresence>
+
+          {/* Nex remains visible as a layer above every routed view. */}
+          <NexPresence view={view} onOpen={() => navigate("ai")} />
 
           {/* Bottom navigation — the whole nav lives here */}
           <BottomDock view={view} onNavigate={navigate} />
@@ -174,6 +193,7 @@ function Shell() {
 
 const DOCK_NAV: Array<{ id: ViewId; label: string; icon: LucideIcon }> = [
   { id: "home", label: "Home", icon: Home },
+  { id: "ai", label: "Nex", icon: Sparkles },
   { id: "apps", label: "Apps", icon: LayoutGrid },
   { id: "folders", label: "Folders", icon: FolderOpen },
   { id: "workspaces", label: "Workspaces", icon: Layers },

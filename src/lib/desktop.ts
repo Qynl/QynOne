@@ -63,6 +63,7 @@ export interface DesktopBridge {
   loadState: () => Promise<QynState | null>;
   saveState: (state: QynState) => Promise<{ ok: boolean }>;
   launch: (target: string) => Promise<{ ok: boolean; error?: string }>;
+  /** Search Windows Start Menu/Desktop shortcuts; an empty query returns the full scan. */
   findShortcuts: (query: string) => Promise<ShortcutHit[]>;
   getSystemInfo: () => Promise<SystemInfo | null>;
   getStats: () => Promise<StatsSnapshot | null>;
@@ -87,11 +88,30 @@ export interface DesktopBridge {
   /* AI configuration — qynone.env in the user data folder */
   aiConfigGet: () => Promise<AiConfig | null>;
   aiConfigSet: (cfg: AiConfig) => Promise<{ ok: boolean; error?: string }>;
+
+  /* Start with Windows — real per-user Run entry through the OS. */
+  autostartGet: () => Promise<{ enabled: boolean; available: boolean }>;
+  autostartSet: (enabled: boolean) => Promise<{ ok: boolean; enabled: boolean; error?: string }>;
+
+  /* Floating Nex — always-on-top companion window with just the eyes */
+  floatToggle: () => Promise<{ open: boolean }>;
+  floatState: () => Promise<{ open: boolean }>;
+  floatClose: () => Promise<{ open: boolean }>;
+  /** Notified whenever the floating Nex window opens or closes. */
+  onFloatChanged: (cb: (open: boolean) => void) => () => void;
 }
 
 /** True when running inside the QynOne desktop app. */
 export function isDesktop(): boolean {
   return typeof window !== "undefined" && typeof window.qynDesktop !== "undefined";
+}
+
+/**
+ * True when this renderer is the always-on-top floating Nex window
+ * (the main window loads the same bundle with a #float hash).
+ */
+export function isFloatMode(): boolean {
+  return typeof window !== "undefined" && window.location.hash === "#float";
 }
 
 /** The desktop bridge, or undefined in the plain web preview. */

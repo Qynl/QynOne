@@ -1,14 +1,20 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from "react";
 import type { ReactNode } from "react";
-import { getDesktop } from "./desktop";
+import { getDesktop, isFloatMode } from "./desktop";
 import type { AiConfig } from "./desktop";
+import { clearNowPlaying, playOnAmazonMusic, setNowPlaying } from "./music";
+import systemPromptMd from "../system-prompt.md?raw";
 import { useQyn } from "./store";
 import { useStats } from "./stats";
 import { useSystemInfo } from "./system";
 import { useVault } from "./vault";
 import { useLaunch } from "../components/ui";
+import { useMemory, MEMORY_PATH, renderMemory } from "./memory";
+import type { MemoryEntry, MemoryKind } from "./memory";
+import { MEMORY_COMPACT_AT, MEMORY_MAX_CHARS, NOTE_MAX_CHARS, VAULT_MAX_NOTES } from "./limits";
+import { runVaultTidy, vaultUsage } from "./vaultMaintain";
 import { dateKey, eventSortKey, fmtTime, parseTime, relativeDay, todayKey, uid } from "./utils";
-import { speak } from "./speech";
+import { speak, stopSpeaking, useNexVoice } from "./speech";
 
 /* ------------------------------------------------------------------ */
 /* Types                                                               */
@@ -17,9 +23,13 @@ import { speak } from "./speech";
 export type AiEmotion =
   | "idle"
   | "awake"
+  | "present"
+  | "greeting"
   | "boot"
   | "listening"
   | "wake"
+  | "attentive"
+  | "speaking"
   | "thinking"
   | "working"
   | "happy"
@@ -33,13 +43,24 @@ export type AiEmotion =
   | "grateful"
   | "calm"
   | "determined"
+  | "powerful"
+  | "relieved"
+  | "frustrated"
+  | "victory"
   | "curious"
   | "focused"
+  | "focusedLeft"
+  | "focusedRight"
+  | "anticipating"
   | "playful"
   | "wink"
   | "shy"
   | "surprised"
   | "shocked"
+  | "alert"
+  | "notification"
+  | "eventSoon"
+  | "missedEvent"
   | "sad"
   | "crying"
   | "worried"
@@ -48,21 +69,40 @@ export type AiEmotion =
   | "angry"
   | "sleepy"
   | "sleeping"
+  | "yawning"
   | "tired"
   | "sick"
   | "zoned"
   | "searching"
+  | "scanning"
+  | "remembering"
+  | "quiet"
   | "offline"
   | "yes"
   | "no"
   | "sorry"
-  | "concerned";
+  | "concerned"
+  | "welcoming"
+  | "confident"
+  | "delighted"
+  | "disappointed"
+  | "amused"
+  | "inspired"
+  | "restless"
+  | "protective"
+  | "settled";
 
 export interface AiMessage {
   id: string;
   role: "user" | "ai";
   text: string;
   tool?: string;
+  ts: number;
+}
+
+export interface NexThought {
+  id: string;
+  text: string;
   ts: number;
 }
 
@@ -141,20 +181,16 @@ function resolvedEndpoint(cfg: AiConfig): string {
 }
 
 /* ------------------------------------------------------------------ */
-/* System prompt                                                       */
+/* System prompt — the real prompt lives in src/system-prompt.md.       */
+/* Only the ephemeral runtime context is appended here.                 */
 /* ------------------------------------------------------------------ */
 
-function systemPrompt(): string {
+function buildSystemPrompt(memorySummary: string): string {
   const now = new Date();
-  return `You are Nex, the AI built into QynOne — the user's personal command center for Windows. You speak out loud when the user talks to you by voice, so keep answers short and natural for speech. You have REAL access to their environment through tools: their applications, virtual folders, workspaces, live system stats, local Markdown vault (notes link with [[wiki links]]), and their calendar (events and to-dos).
-
-Rules:
-- Be warm, concise and human. Answer in the same language the user writes in.
-- Use tools whenever the user asks for something QynOne can do (open, launch, navigate, create a note, search notes, list things, system stats, calendar).
-- After using a tool, briefly say what you did. Never invent results — report what the tool returned.
-- When the user asks about their notes, use the vault tools. When they ask about events, plans or to-dos, use the calendar tools.
-- You have no admin rights and never need them; everything is user-level.
-- Today: ${now.toLocaleDateString(undefined, { weekday: "long", year: "numeric", month: "long", day: "numeric" })}. Current time: ${now.toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit" })}.`;
+  const memoryBlock = memorySummary
+    ? `What you remember about this user (long-term memory, stored in ${MEMORY_PATH}):\n${memorySummary}\nUse this to be personal — greet them, reference their projects and preferences. When they correct or update something you remembered, save the correction with the remember tool.`
+    : "You have no long-term memory of this user yet. When they tell you something personal (a name, a favorite, a preference, an ongoing project), use the remember tool to save it.";
+  return `${systemPromptMd.trim()}\n\n---\n\n## Runtime context (refreshed on every request)\n\n- Today: ${now.toLocaleDateString(undefined, { weekday: "long", year: "numeric", month: "long", day: "numeric" })}. Current time: ${now.toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit" })}.\n- Vault budget: max ${VAULT_MAX_NOTES} notes, ${(NOTE_MAX_CHARS / 1000).toFixed(0)} KB per note. Memory file: ${MEMORY_PATH} (capped at ${(MEMORY_MAX_CHARS / 1000).toFixed(1)} KB).\n- ${memoryBlock}`;
 }
 
 /* ------------------------------------------------------------------ */
@@ -230,6 +266,70 @@ async function resolveModel(cfg: AiConfig): Promise<string> {
 }
 
 /* ------------------------------------------------------------------ */
+/* Automatic memory — Nex saves personal facts it hears                */
+/* ------------------------------------------------------------------ */
+
+/** Only run extraction when the user message plausibly contains personal info. */
+const PERSONAL_RE =
+  /(my name is|call me|i am |i'm |i (?:like|love|prefer|play|use|work|hate|want|need|study|read|watch|enjoy|started|build|built|make|made)|my favorite|my (?:game|app|pc|computer|project|job|birthday|hobby|school|team|dog|cat|name)|remember (?:that|this)|i live in|i go to|i work at|i study)/i;
+
+/**
+ * Real, deterministic tone reading of the user's message — the eyes react
+ * to what the user says and how they say it (frustration, joy, excitement,
+ * gratitude, sadness, confusion, sleepiness, …). Rule-based on the actual
+ * words, so it is honest: it reacts to what the user typed or said.
+ */
+function detectTone(text: string): AiEmotion | null {
+  const t = text.trim();
+  if (!t) return null;
+  const anger =
+    /\b(shut up|hate this|screw (this|it|that)|wtf|damn( it)?!|annoying|terrible|worst|broken again|not working|fix it now|useless)\b|!{3,}/i;
+  const sad = /\b(sad|depressed|miss (you|it|him|her)|bad day|lonely|cry(ing)?|heartbroken|down)\b/i;
+  const praise = /\b(thanks|thank you|good (job|work|one)|great|awesome|amazing|nice|love (it|this|you)|perfect|brilliant)\b/i;
+  const cheer = /(^|\s)(yes!|wo+ho+!|ya?ay|let's go|hyped|party time)|!{2,}/i;
+  const confusion = /\b(huh\?|what\?|why\?|confus(ed|ing)|doesn'?t make sense|i don'?t get it)\b/i;
+  const sleepy = /\b(sleepy|exhausted|going to bed|good night|can'?t keep my eyes open)\b/i;
+  if (anger.test(t)) return "frustrated";
+  if (sad.test(t)) return "concerned";
+  if (praise.test(t)) return "grateful";
+  if (cheer.test(t)) return "excited";
+  if (confusion.test(t)) return "confused";
+  if (sleepy.test(t)) return "sleepy";
+  if (/[?？]{1,}$/.test(t)) return "curious";
+  return null;
+}
+
+/** Ask the model to extract durable personal facts from an exchange. */
+async function extractMemoryFacts(cfg: AiConfig, model: string, userText: string, aiText: string): Promise<string[]> {
+  const res = await chatOnce(
+    cfg,
+    model,
+    [
+      {
+        role: "system",
+        content:
+          "Extract only durable personal facts about the user from this exchange: preferences, favorites, habits, identity, ongoing projects. Return ONLY a JSON array of short strings (each under 16 words). If nothing personal was shared, return []. Never invent or guess facts.",
+      },
+      { role: "user", content: `User said: ${userText.slice(0, 600)}\n\nNex replied: ${aiText.slice(0, 600)}` },
+    ],
+    [],
+    AbortSignal.timeout(20000),
+  );
+  try {
+    const parsed = JSON.parse(res.content.replace(/```json|```/g, "").trim()) as unknown;
+    if (Array.isArray(parsed)) {
+      return parsed
+        .filter((x): x is string => typeof x === "string" && x.trim().length > 4)
+        .map((x) => x.trim())
+        .slice(0, 3);
+    }
+  } catch {
+    // not JSON — ignore
+  }
+  return [];
+}
+
+/* ------------------------------------------------------------------ */
 /* Context                                                             */
 /* ------------------------------------------------------------------ */
 
@@ -240,6 +340,7 @@ export interface SendOptions {
 
 interface AiValue {
   messages: AiMessage[];
+  thoughts: NexThought[];
   busy: boolean;
   emotion: AiEmotion;
   config: AiConfig;
@@ -250,6 +351,11 @@ interface AiValue {
   testConnection: () => Promise<{ ok: boolean; message: string; models?: string[] }>;
   setListening: (v: boolean) => void;
   setEmotion: (e: AiEmotion, ms?: number) => void;
+  announce: (text: string, emotion?: AiEmotion, speakIt?: boolean) => void;
+  /** Compress Nex's personal memory with the model so it fits its cap. */
+  compactMemory: () => Promise<{ ok: boolean; message: string }>;
+  voiceEnabled: boolean;
+  setVoiceEnabled: (enabled: boolean) => void;
 }
 
 const AiContext = createContext<AiValue | null>(null);
@@ -267,6 +373,7 @@ export function AiProvider({
 }) {
   const { state, actions } = useQyn();
   const vault = useVault();
+  const memory = useMemory();
   const launch = useLaunch();
   const stats = useStats();
   const sys = useSystemInfo();
@@ -277,7 +384,11 @@ export function AiProvider({
   const [messages, setMessages] = useState<AiMessage[]>([]);
   const messagesRef = useRef<AiMessage[]>([]);
   messagesRef.current = messages;
+  const [thoughts, setThoughts] = useState<NexThought[]>([
+    { id: uid(), text: "*watching QynOne*", ts: Date.now() },
+  ]);
   const [busy, setBusy] = useState(false);
+  const [voiceEnabled, setVoiceEnabled] = useState(false);
   const [emotion, setEmotion] = useState<AiEmotion>("idle");
   const [config, setConfig] = useState<AiConfig>({ provider: "ollama", endpoint: "", model: "", key: "" });
   const configRef = useRef(config);
@@ -294,6 +405,41 @@ export function AiProvider({
     };
   }, []);
 
+  /* Voice exclusivity — one Nex owns the microphone. While the floating Nex
+     window is open, this (main) Nex never listens; when the float closes,
+     voice returns exactly as it was before. The float itself runs its own
+     copy of this provider and does not gate itself. */
+  const isFloatRenderer = useMemo(() => isFloatMode(), []);
+  const [floatOpen, setFloatOpen] = useState(false);
+  const suspendedVoice = useRef(false);
+
+  useEffect(() => {
+    const bridge = getDesktop();
+    if (!bridge || isFloatRenderer) return;
+    let off: (() => void) | undefined;
+    bridge
+      .floatState()
+      .then((s) => setFloatOpen(Boolean(s?.open)))
+      .catch(() => {});
+    off = bridge.onFloatChanged((open) => {
+      if (!open && suspendedVoice.current) {
+        suspendedVoice.current = false;
+        setVoiceEnabled(true);
+      }
+      setFloatOpen(open);
+    });
+    return () => off?.();
+  }, [isFloatRenderer]);
+
+  useEffect(() => {
+    if (!floatOpen || isFloatRenderer) return;
+    if (voiceEnabled) {
+      suspendedVoice.current = true;
+      stopSpeaking();
+      setVoiceEnabled(false);
+    }
+  }, [floatOpen, isFloatRenderer, voiceEnabled]);
+
   const setEmotionFor = useCallback((e: AiEmotion, durationMs?: number) => {
     setEmotion(e);
     if (emotionTimer.current) clearTimeout(emotionTimer.current);
@@ -302,15 +448,73 @@ export function AiProvider({
     }
   }, []);
 
+  const announce = useCallback((rawText: string, nextEmotion?: AiEmotion, speakIt = false) => {
+    const text = rawText.trim();
+    if (!text) return;
+    setThoughts((current) => [...current, { id: uid(), text, ts: Date.now() }].slice(-24));
+    if (nextEmotion) setEmotionFor(nextEmotion, 1800);
+    if (speakIt) speak(text.replace(/^\*|\*$/g, ""));
+  }, [setEmotionFor]);
+
   const push = useCallback((role: "user" | "ai", text: string, tool?: string) => {
     setMessages((m) => [...m, { id: uid(), role, text, tool, ts: Date.now() }]);
   }, []);
+
+  /* ------------------------------------------------------------------ */
+  /* AI-managed memory — compress _Nex/Memory.md so it fits its cap      */
+  /* ------------------------------------------------------------------ */
+
+  const compactMemory = useCallback(async (): Promise<{ ok: boolean; message: string }> => {
+    const cfg = configRef.current;
+    const needsKey = (cfg.provider === "openai" || cfg.provider === "custom") && !cfg.key;
+    if (needsKey) {
+      return {
+        ok: false,
+        message: `Compressing memory needs a model connection — ${PROVIDERS[cfg.provider]?.label ?? "this provider"} needs an API key in Settings → AI. Until then Nex keeps the file under its ${(MEMORY_MAX_CHARS / 1000).toFixed(1)} KB cap by dropping the oldest entries automatically.`,
+      };
+    }
+    if (memory.entries.length === 0) return { ok: true, message: "There's nothing in memory yet to compress." };
+    try {
+      const model = await resolveModel(cfg);
+      const res = await chatOnce(
+        cfg,
+        model,
+        [
+          {
+            role: "system",
+            content: "You compress a personal memory file for Nex, an AI assistant. Merge duplicates, drop ephemeral conversation trivia, keep only durable facts and preferences about the user. Never invent anything. Be factual and very concise.",
+          },
+          {
+            role: "user",
+            content: `Current memory (${memory.entries.length} entries, ${memory.usage}/${memory.max} chars of file budget):\n${renderMemory(memory.entries)}\n\nRewrite it as ONLY JSON like: {"facts":["..."],"preferences":["..."]}. No markdown, no comments, each string under 160 characters.`,
+          },
+        ],
+        [],
+        AbortSignal.timeout(30000),
+      );
+      const parsed = JSON.parse(res.content.replace(/```json|```/g, "").trim()) as { facts?: unknown; preferences?: unknown };
+      const toEntries = (arr: unknown, kind: MemoryKind): MemoryEntry[] =>
+        Array.isArray(arr)
+          ? arr
+              .filter((x): x is string => typeof x === "string" && x.trim().length > 2)
+              .map((text) => ({ id: `${kind[0]}_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`, kind, date: new Date().toISOString().slice(0, 10), text: text.trim().slice(0, 200) }))
+          : [];
+      const merged = [...toEntries(parsed.facts, "fact"), ...toEntries(parsed.preferences, "preference")];
+      if (merged.length === 0) return { ok: false, message: "The model returned nothing usable — memory left unchanged." };
+      const fitted = await memory.replaceAll(merged);
+      const chars = fitted.reduce((s, e) => s + e.text.length, 0);
+      return { ok: true, message: `Compressed memory to ${fitted.length} essentials (${chars.toLocaleString()} chars) — old details are gone, only what matters stays.` };
+    } catch (e) {
+      return { ok: false, message: `Compression failed: ${String((e as Error)?.message ?? e)}. Memory is still safely under its cap.` };
+    }
+  }, [memory]);
 
   /* ------------------------------------------------------------------ */
   /* Tools — real access to QynOne                                       */
   /* ------------------------------------------------------------------ */
 
   const tools = useMemo<AiToolDef[]>(() => {
+    const userNotes = vault.notes.filter((n) => !n.folder.startsWith("_"));
     const findApp = (query: string) => {
       const q = query.trim().toLowerCase();
       return (
@@ -340,7 +544,7 @@ export function AiProvider({
         },
         run: (args) => {
           const view = String(args.view ?? "").toLowerCase();
-          const allowed = ["home", "apps", "folders", "workspaces", "system", "files", "tools", "vault", "calendar", "settings", "profile"];
+          const allowed = ["home", "ai", "apps", "folders", "workspaces", "system", "files", "tools", "vault", "calendar", "settings", "profile"];
           if (!allowed.includes(view)) return `Unknown view "${view}". Allowed: ${allowed.join(", ")}.`;
           onNavigate(view);
           return `Opened ${view}.`;
@@ -458,8 +662,14 @@ export function AiProvider({
           if (!name) return "A note needs a name.";
           const folder = String(args.folder ?? "").trim();
           const content = String(args.content ?? `# ${name}\n\n`);
+          if (content.length > NOTE_MAX_CHARS) {
+            return `That note would be ${(content.length / 1024).toFixed(1)} KB — over the ${(NOTE_MAX_CHARS / 1000).toFixed(0)} KB per-note limit. Make it shorter, or let me keep a summary instead.`;
+          }
+          if (!folder.split("/")[0].startsWith("_") && userNotes.length >= VAULT_MAX_NOTES) {
+            return `The vault is full (${VAULT_MAX_NOTES} notes). Say /vault-cleanup and I'll archive what no longer fits.`;
+          }
           const path = await vault.createNote(name, folder, content);
-          if (!path) return `Couldn't create "${name}" (does it already exist?).`;
+          if (!path) return `Couldn't create "${name}" (does it already exist, or is the vault at its limit?).`;
           return `Created note ${path}.`;
         },
       },
@@ -474,7 +684,7 @@ export function AiProvider({
         },
         run: (args) => {
           const q = String(args.query ?? "").toLowerCase();
-          const hit = vault.notes.find((n) => n.name.toLowerCase() === q) ?? vault.notes.find((n) => n.name.toLowerCase().includes(q));
+          const hit = userNotes.find((n) => n.name.toLowerCase() === q) ?? userNotes.find((n) => n.name.toLowerCase().includes(q));
           if (!hit) return `No note named "${args.query}" in the vault.`;
           onOpenNote(hit.name);
           return `Opening note ${hit.name}.`;
@@ -490,7 +700,7 @@ export function AiProvider({
           required: ["query"],
         },
         run: (args) => {
-          const hits = vault.searchNotes(String(args.query ?? ""));
+          const hits = vault.searchNotes(String(args.query ?? "")).filter((n) => !n.folder.startsWith("_"));
           if (hits.length === 0) return `Nothing found for "${args.query}".`;
           return hits
             .slice(0, 6)
@@ -504,14 +714,100 @@ export function AiProvider({
         description: "List every note in the vault.",
         parameters: { type: "object", properties: {} },
         run: () =>
-          vault.notes.length === 0
+          userNotes.length === 0
             ? "The vault is empty."
-            : vault.notes.map((n) => `${n.name} (${n.folder || "root"})`).join(", "),
+            : userNotes.map((n) => `${n.name} (${n.folder || "root"})`).join(", "),
+      },
+      {
+        name: "remember",
+        usage: "/remember <fact> [kind: fact|preference]",
+        description: "Save a fact or preference about the user so Nex remembers it long-term. Stored as a real line in the Markdown vault (_Nex/Memory.md).",
+        parameters: {
+          type: "object",
+          properties: {
+            fact: { type: "string", description: "what to remember, e.g. 'the user's favorite game is Minecraft'" },
+            kind: { type: "string", enum: ["fact", "preference"], description: "fact or preference" },
+          },
+          required: ["fact"],
+        },
+        run: async (args) => {
+          const fact = String(args.fact ?? "").trim();
+          if (!fact) return "There's nothing to remember yet.";
+          const kind: MemoryKind = args.kind === "preference" ? "preference" : "fact";
+          const saved = await memory.add(kind, fact);
+          if (!saved) return `I already remember: "${fact}".`;
+          return `Remembered (${kind}): "${fact}". It's stored in ${MEMORY_PATH}.`;
+        },
+      },
+      {
+        name: "memory",
+        usage: "/memory",
+        description: "Show everything Nex remembers about the user: facts, preferences and recent conversations.",
+        parameters: { type: "object", properties: {} },
+        run: () => {
+          if (memory.entries.length === 0) {
+            return "I don't remember anything about you yet. Tell me something personal (a favorite, a project, a preference) and I'll save it — or use /remember.";
+          }
+          const parts: string[] = [];
+          if (memory.facts.length) parts.push(`Facts: ${memory.facts.map((e) => e.text).join("; ")}`);
+          if (memory.preferences.length) parts.push(`Preferences: ${memory.preferences.map((e) => e.text).join("; ")}`);
+          if (memory.conversations.length) parts.push(`Recent conversations: ${memory.conversations.slice(-4).map((e) => e.text).join("; ")}`);
+          return parts.join("\n");
+        },
+      },
+      {
+        name: "forget",
+        usage: "/forget <text or id>",
+        description: "Delete one or more memory entries that match the given text or entry id.",
+        parameters: {
+          type: "object",
+          properties: { query: { type: "string", description: "text or id of the memory to forget" } },
+          required: ["query"],
+        },
+        run: async (args) => {
+          const q = String(args.query ?? "").toLowerCase().trim();
+          if (!q) return "What should I forget?";
+          const hits = memory.entries.filter((e) => e.id === q || e.text.toLowerCase().includes(q));
+          if (hits.length === 0) return `I don't remember anything matching "${args.query}".`;
+          for (const h of hits) await memory.remove(h.id);
+          return `Forgot ${hits.length} thing${hits.length === 1 ? "" : "s"}: ${hits.map((h) => `"${h.text}"`).join(", ")}.`;
+        },
+      },
+      {
+        name: "memory-compact",
+        usage: "/memory-compact",
+        description: "Compress Nex's personal memory (_Nex/Memory.md, capped at 2 KB) with the AI — merges duplicates and drops trivia so only the essentials fit.",
+        parameters: { type: "object", properties: {} },
+        run: async () => {
+          const r = await compactMemory();
+          return r.message;
+        },
+      },
+      {
+        name: "vault-stats",
+        usage: "/vault-stats",
+        description: "Show how full the vault is versus its budgets: max notes, max size per note, and Nex's memory usage.",
+        parameters: { type: "object", properties: {} },
+        run: () => {
+          const u = vaultUsage(vault.notes);
+          const mem = `${memory.usage.toLocaleString()} / ${memory.max.toLocaleString()} chars (${memory.facts.length} facts, ${memory.preferences.length} preferences${memory.conversations.length ? `, ${memory.conversations.length} conversations` : ""})`;
+          return `Vault: ${u.notes}/${u.maxNotes} notes · largest note ${(u.largestChars / 1024).toFixed(1)} KB (limit ${(NOTE_MAX_CHARS / 1000).toFixed(0)} KB each) · total ${(u.totalChars / 1024).toFixed(1)} KB. Nex memory: ${mem}. ${u.over ? "The vault is over budget — say /vault-cleanup." : "Everything is within budget."}`;
+        },
+      },
+      {
+        name: "vault-cleanup",
+        usage: "/vault-cleanup",
+        description: "Manage the vault when it exceeds its budgets: archive oversized notes (full version saved under _Nex/Archive) and condense them, and archive surplus orphan notes to bring the count back under the limit.",
+        parameters: { type: "object", properties: {} },
+        run: async () => {
+          const r = await runVaultTidy(vault);
+          return r.actions.join("\n");
+        },
       },
       {
         name: "open-vault",
         usage: "/open-vault",
-        description: "Open the Markdown vault and knowledge graph.",
+        description: "Open the Markdown vault and Nex's memory.",
         parameters: { type: "object", properties: {} },
         run: () => {
           onNavigate("vault");
@@ -681,8 +977,36 @@ export function AiProvider({
           return `Noted.`;
         },
       },
+      {
+        name: "music",
+        usage: "/music <song, artist or album>",
+        description: "Play music through Amazon Music — opens Amazon Music searching exactly what the user asked for and puts your headphones on (headphones + dance + track shown below the eyes).",
+        parameters: {
+          type: "object",
+          properties: { query: { type: "string", description: "song, artist, album or playlist the user wants to hear" } },
+          required: ["query"],
+        },
+        run: async (args) => {
+          const query = String(args.query ?? "").trim();
+          if (!query) return "What should I play? Name a song, an artist or an album.";
+          const res = await playOnAmazonMusic(query);
+          if (!res.ok) return `I couldn't open Amazon Music: ${res.error ?? "unknown error"}.`;
+          setNowPlaying(query);
+          return `Amazon Music is open, searching “${query}”. Amazon Music has no public now-playing API, so I'll show “${query}” as playing until you stop me or tell me the real track.`;
+        },
+      },
+      {
+        name: "music-stop",
+        usage: "/music-stop",
+        description: "Stop the music session — headphones off, dancing stops, track caption disappears.",
+        parameters: { type: "object", properties: {} },
+        run: () => {
+          clearNowPlaying();
+          return "Music stopped — headphones off.";
+        },
+      },
     ];
-  }, [state, vault, launch, onNavigate, onOpenFolder, onOpenNote, actions]);
+  }, [state, vault, memory, launch, onNavigate, onOpenFolder, onOpenNote, actions]);
 
   /* ------------------------------------------------------------------ */
   /* Send                                                               */
@@ -693,6 +1017,8 @@ export function AiProvider({
       const text = rawText.trim();
       if (!text || busy) return;
       const viaVoice = Boolean(opts?.voice);
+      const tone = detectTone(text);
+      announce(viaVoice ? "*listening to you*" : "*receiving a new request*", "attentive");
 
       /* Slash commands — direct tool use. */
       const slash = text.match(/^\/([a-z-]+)\s*(.*)$/i);
@@ -702,6 +1028,7 @@ export function AiProvider({
         const tool = tools.find((t) => t.name === toolName);
         push("user", text, toolName);
         setEmotionFor("working");
+        announce(`*using /${toolName}*`, "working");
         setBusy(true);
         try {
           if (!tool) {
@@ -725,9 +1052,11 @@ export function AiProvider({
           }
           const result = await tool.run(args);
           push("ai", result, toolName);
+          announce(`*finished /${toolName}*`, "happy");
           setEmotionFor("happy", 1400);
         } catch (e) {
           push("ai", `The tool errored: ${String((e as Error)?.message ?? e)}`);
+          announce(`* /${toolName} needs attention*`, "concerned");
           setEmotionFor("concerned", 1800);
         } finally {
           setBusy(false);
@@ -752,6 +1081,7 @@ export function AiProvider({
       }
 
       push("user", text);
+      announce("*thinking about what you asked*", "thinking");
       setBusy(true);
       setEmotionFor("thinking");
       const controller = new AbortController();
@@ -764,7 +1094,7 @@ export function AiProvider({
           .slice(-12)
           .map((m) => ({ role: m.role, content: m.text }));
         const msgs: Array<Record<string, unknown>> = [
-          { role: "system", content: systemPrompt() },
+          { role: "system", content: buildSystemPrompt(memory.summary) },
           ...history,
           { role: "user", content: text },
         ];
@@ -788,6 +1118,7 @@ export function AiProvider({
           for (const tc of res.toolCalls) {
             const tool = tools.find((t) => t.name === tc.function.name);
             let result: string;
+            announce(`*using /${tc.function.name}*`, "working");
             setEmotionFor("working");
             try {
               const args = (() => {
@@ -806,8 +1137,39 @@ export function AiProvider({
         }
         if (!finalText.trim()) finalText = "I couldn't produce an answer.";
         push("ai", finalText.trim());
+        announce("*answer ready*", "happy");
         setEmotionFor("happy", 1600);
         if (viaVoice) speak(finalText.trim());
+
+        /* React to the user's tone after answering — typed messages show it
+           on the eyes; spoken replies are already animated by the voice. */
+        if (tone && !viaVoice) setEmotionFor(tone, 2600);
+
+        /* Personal memory — when the user shares something personal, Nex
+           quietly extracts durable facts and saves them to _Nex/Memory.md. */
+        if (PERSONAL_RE.test(text)) {
+          try {
+            const facts = await extractMemoryFacts(cfg, model, text, finalText);
+            if (facts.length > 0) {
+              let saved = 0;
+              for (const fact of facts) {
+                const entry = await memory.add("fact", fact);
+                if (entry) saved += 1;
+              }
+              if (saved > 0) {
+                announce(`*remembered ${saved} thing${saved === 1 ? "" : "s"} about you*`, "remembering");
+                /* Memory is capped: when it gets close to full, Nex manages it
+                   by compressing to the essentials with the model. */
+                if (memory.usage > memory.max * MEMORY_COMPACT_AT) {
+                  const comp = await compactMemory();
+                  announce(comp.ok ? "*memory nearly full — compressed to the essentials*" : "*memory is near its cap*", comp.ok ? "working" : "concerned");
+                }
+              }
+            }
+          } catch {
+            // memory is best-effort — never break the answer
+          }
+        }
       } catch (e) {
         const err = e as Error;
         const isAbort = err.name === "AbortError";
@@ -824,6 +1186,7 @@ export function AiProvider({
           reply = `The AI request failed: ${err.message}. Check Settings → AI.`;
         }
         push("ai", reply);
+        announce("*the connection needs attention*", "concerned");
         setEmotionFor("concerned", 2200);
         if (viaVoice) speak(reply);
       } finally {
@@ -831,8 +1194,31 @@ export function AiProvider({
         setBusy(false);
       }
     },
-    [busy, messages, push, setEmotionFor, tools],
+    [announce, busy, compactMemory, memory, messages, push, setEmotionFor, tools],
   );
+
+  useNexVoice({
+    enabled: voiceEnabled,
+    callbacks: {
+      onWake: () => announce("*Nex is awake*", "wake"),
+      onListenStart: () => setEmotion("listening"),
+      onIdle: () => {
+        if (!busy) setEmotion("idle");
+      },
+      onCommand: (text) => {
+        announce("*listening closely*", "attentive");
+        void send(text, { voice: true });
+      },
+      onError: (message) => {
+        setVoiceEnabled(false);
+        announce(`*voice needs attention: ${message}*`, "concerned");
+      },
+    },
+  });
+
+  useEffect(() => {
+    if (!voiceEnabled) stopSpeaking();
+  }, [voiceEnabled]);
 
   const clearChat = useCallback(() => {
     setMessages([]);
@@ -870,6 +1256,7 @@ export function AiProvider({
   const value = useMemo<AiValue>(
     () => ({
       messages,
+      thoughts,
       busy,
       emotion,
       config,
@@ -880,8 +1267,12 @@ export function AiProvider({
       testConnection,
       setListening,
       setEmotion: setEmotionFor,
+      announce,
+      compactMemory,
+      voiceEnabled,
+      setVoiceEnabled,
     }),
-    [messages, busy, emotion, config, tools, send, clearChat, saveConfigCb, testConnection, setListening, setEmotionFor],
+    [messages, thoughts, busy, emotion, config, tools, send, clearChat, saveConfigCb, testConnection, compactMemory, setListening, setEmotionFor, announce, voiceEnabled],
   );
 
   return <AiContext.Provider value={value}>{children}</AiContext.Provider>;

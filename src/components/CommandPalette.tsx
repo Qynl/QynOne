@@ -264,10 +264,21 @@ export function CommandPalette({
         key: "act-vault",
         group: "Actions" as const,
         icon: <ActionGlyph><BookOpen size={15} /></ActionGlyph>,
-        label: "Open the vault & graph",
+        label: "Open the vault & Nex's memory",
         run: () => {
           onClose();
           onNavigate("vault");
+        },
+      },
+      {
+        key: "act-ai",
+        group: "Actions" as const,
+        icon: <ActionGlyph><Sparkles size={15} /></ActionGlyph>,
+        label: "Talk to Nex",
+        hint: "Open the AI workspace and tool list",
+        run: () => {
+          onClose();
+          onNavigate("ai");
         },
       },
       {

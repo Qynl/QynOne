@@ -1,4 +1,4 @@
-export type ViewId = "home" | "apps" | "folders" | "workspaces" | "system" | "files" | "tools" | "vault" | "calendar" | "settings" | "profile";
+export type ViewId = "home" | "ai" | "apps" | "folders" | "workspaces" | "system" | "files" | "tools" | "vault" | "calendar" | "settings" | "profile";
 
 export interface AppItem {
   id: string;
@@ -43,6 +43,8 @@ export interface Settings {
   clock: boolean;
   /** live battery readout in the top bar */
   battery: boolean;
+  /** whether the one-time "make QynOne start with Windows" ask was already shown */
+  frontdoorAsked: boolean;
   /** Home widget order — id list, front to back */
   homeOrder: string[];
   /** Home widgets the user has hidden */

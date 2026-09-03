@@ -37,16 +37,24 @@ if (speechSupported()) {
 }
 
 /** Speak a line out loud. Safe to call anywhere; no-ops when unsupported. */
+function notifySpeaking(active: boolean): void {
+  if (typeof window === "undefined") return;
+  window.dispatchEvent(new CustomEvent("qyn:nex-speaking", { detail: { active } }));
+}
+
 export function speak(text: string): void {
   if (!speechSupported() || !text.trim()) return;
   try {
     const synth = window.speechSynthesis;
     synth.cancel();
+    notifySpeaking(true);
     const u = new SpeechSynthesisUtterance(text.replace(/[*_#`[\]()]/g, "").slice(0, 420));
     u.voice = pickVoice();
     u.rate = 1.04;
     u.pitch = 1.02;
     u.volume = 1;
+    u.onend = () => notifySpeaking(false);
+    u.onerror = () => notifySpeaking(false);
     synth.speak(u);
   } catch {
     // never let voice break the app
@@ -54,6 +62,7 @@ export function speak(text: string): void {
 }
 
 export function stopSpeaking(): void {
+  notifySpeaking(false);
   if (speechSupported()) {
     try {
       window.speechSynthesis.cancel();

@@ -52,4 +52,19 @@ contextBridge.exposeInMainWorld("qynDesktop", {
   /* AI configuration — qynone.env in the user data folder */
   aiConfigGet: () => ipcRenderer.invoke("qyn:ai-config-get"),
   aiConfigSet: (cfg) => ipcRenderer.invoke("qyn:ai-config-set", cfg),
+
+  /* Start with Windows — real per-user Run entry through the OS */
+  autostartGet: () => ipcRenderer.invoke("qyn:autostart-get"),
+  autostartSet: (enabled) => ipcRenderer.invoke("qyn:autostart-set", enabled),
+
+  /* Floating Nex — always-on-top companion window with just the eyes */
+  floatToggle: () => ipcRenderer.invoke("qyn:float-toggle"),
+  floatState: () => ipcRenderer.invoke("qyn:float-state"),
+  floatClose: () => ipcRenderer.invoke("qyn:float-close"),
+  /* The main process notifies every window when the float opens/closes. */
+  onFloatChanged: (cb) => {
+    const listener = (_event, state) => cb(Boolean(state && state.open));
+    ipcRenderer.on("qyn:float-changed", listener);
+    return () => ipcRenderer.removeListener("qyn:float-changed", listener);
+  },
 });

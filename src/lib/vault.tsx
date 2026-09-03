@@ -1,6 +1,7 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from "react";
 import type { ReactNode } from "react";
 import { getDesktop } from "./desktop";
+import { NOTE_MAX_CHARS, VAULT_MAX_NOTES } from "./limits";
 import { extractTags, extractWikiLinks, noteTitle } from "./markdown";
 
 const PREVIEW_KEY = "qynone.vault.v1";
@@ -22,12 +23,13 @@ export interface VaultNote {
   updatedAt: number;
 }
 
-export interface GraphEdge {
-  source: string; // note id
-  target: string; // note id
+/** True for Nex's own files — folders starting with `_` (e.g. _Nex).
+    System notes don't count against the vault budget. */
+export function isSystemNote(n: { folder: string }): boolean {
+  return n.folder.split("/")[0]?.startsWith("_") ?? false;
 }
 
-interface VaultValue {
+export interface VaultValue {
   notes: VaultNote[];
   folders: string[];
   root: string | null;
@@ -40,8 +42,6 @@ interface VaultValue {
   renameNote: (id: string, newName: string) => Promise<void>;
   deleteNote: (id: string) => Promise<void>;
   createFolder: (name: string) => Promise<void>;
-  /** edges derived from actual [[links]] in the files — never hardcoded */
-  graphEdges: GraphEdge[];
   searchNotes: (query: string) => VaultNote[];
 }
 
@@ -168,32 +168,6 @@ export function VaultProvider({ children }: { children: ReactNode }) {
     return list.sort((a, b) => a.name.localeCompare(b.name));
   }, [files]);
 
-  const graphEdges = useMemo<GraphEdge[]>(() => {
-    const byName = new Map<string, VaultNote[]>();
-    for (const n of notes) {
-      const key = n.name.toLowerCase();
-      const arr = byName.get(key) ?? [];
-      arr.push(n);
-      byName.set(key, arr);
-    }
-    const seen = new Set<string>();
-    const edges: GraphEdge[] = [];
-    for (const n of notes) {
-      for (const target of n.links) {
-        const hits = byName.get(target.toLowerCase());
-        if (!hits) continue;
-        for (const hit of hits) {
-          if (hit.id === n.id) continue;
-          const key = [n.id, hit.id].sort().join("|");
-          if (seen.has(key)) continue;
-          seen.add(key);
-          edges.push({ source: n.id, target: hit.id });
-        }
-      }
-    }
-    return edges;
-  }, [notes]);
-
   const searchNotes = useCallback(
     (query: string) => {
       const q = query.trim().toLowerCase();
@@ -220,6 +194,15 @@ export function VaultProvider({ children }: { children: ReactNode }) {
       if (!cleanName) return null;
       const path = folder ? `${folder}/${cleanName}.md` : `${cleanName}.md`;
       if (files[path]) return null;
+      /* Vault budgets: regular notes are limited in size and count; Nex's own
+         `_` system notes (memory, archive) bypass both so management can
+         always work. */
+      const isSystem = folder.split("/")[0]?.startsWith("_") ?? false;
+      if (!isSystem) {
+        if (content.length > NOTE_MAX_CHARS) return null;
+        const userCount = Object.keys(files).filter((p) => !isSystemNote({ folder: p.split("/").slice(0, -1).join("/") })).length;
+        if (userCount >= VAULT_MAX_NOTES) return null;
+      }
       if (bridge) {
         const res = await bridge.vaultWrite(path, content);
         if (!res.ok) {
@@ -330,10 +313,9 @@ export function VaultProvider({ children }: { children: ReactNode }) {
       renameNote,
       deleteNote,
       createFolder,
-      graphEdges,
       searchNotes,
     }),
-    [notes, folders, root, loading, isReal, error, refresh, createNote, saveNote, renameNote, deleteNote, createFolder, graphEdges, searchNotes],
+    [notes, folders, root, loading, isReal, error, refresh, createNote, saveNote, renameNote, deleteNote, createFolder, searchNotes],
   );
 
   return <VaultContext.Provider value={value}>{children}</VaultContext.Provider>;

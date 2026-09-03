@@ -3,18 +3,26 @@ import { Check, Cpu, Download, HardDrive, Monitor, Server, User } from "lucide-r
 import { COLOR_CHOICES, TextInput } from "../components/modals";
 import { Avatar, SectionHeader } from "../components/ui";
 import { isDesktop } from "../lib/desktop";
+import { useMemory } from "../lib/memory";
 import { useQyn } from "../lib/store";
 import { useSystemInfo } from "../lib/system";
+import { useVault } from "../lib/vault";
 import type { ViewId } from "../lib/types";
 import { cn, shade } from "../lib/utils";
 
 export function ProfileView({ onNavigate }: { onNavigate: (v: ViewId) => void }) {
   const { state, actions } = useQyn();
   const sys = useSystemInfo();
+  const vault = useVault();
+  const memory = useMemory();
   const p = state.profile;
 
+  /* Every number here is real, live data from the user's actual QynOne. */
   const totalLaunches = state.recents.reduce((sum, r) => sum + r.count, 0);
-  const favorites = state.apps.filter((a) => a.favorite).length;
+  const pinnedApps = state.apps.filter((a) => a.favorite).length;
+  const vaultNotes = vault.notes.filter((n) => !n.folder.split("/")[0]?.startsWith("_")).length;
+  const eventsScheduled = state.events.length;
+  const eventsDone = state.events.filter((e) => e.done).length;
 
   return (
     <div className="mx-auto w-full max-w-[760px] px-5 py-7 md:px-8">
@@ -85,10 +93,18 @@ export function ProfileView({ onNavigate }: { onNavigate: (v: ViewId) => void })
             <SectionHeader title="Your numbers" />
             <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
               <StatTile label="Total launches" value={totalLaunches} />
-              <StatTile label="Pinned apps" value={favorites} />
+              <StatTile label="Pinned apps" value={pinnedApps} />
               <StatTile label="Applications" value={state.apps.length} />
               <StatTile label="Virtual folders" value={state.folders.length} />
+              <StatTile label="Workspaces" value={state.workspaces.length} />
+              <StatTile label="Vault notes" value={vaultNotes} />
+              <StatTile label="Events · done" value={`${eventsScheduled} · ${eventsDone}`} />
+              <StatTile label="Nex remembers" value={memory.entries.length} />
             </div>
+            <p className="mt-3 px-1 text-[11px] leading-relaxed text-frost-500">
+              Live from your QynOne — launches, library, vault and memory are all read from the real local data on
+              this PC.
+            </p>
           </section>
 
           {/* ---------- This machine ---------- */}
@@ -125,10 +141,10 @@ export function ProfileView({ onNavigate }: { onNavigate: (v: ViewId) => void })
   );
 }
 
-function StatTile({ label, value }: { label: string; value: number }) {
+function StatTile({ label, value }: { label: string; value: number | string }) {
   return (
     <div className="glass-soft rounded-xl px-3 py-3.5 text-center">
-      <p className="text-[22px] font-bold tabular-nums tracking-tight text-frost-100">{value}</p>
+      <p className="truncate text-[22px] font-bold tabular-nums tracking-tight text-frost-100">{value}</p>
       <p className="mt-0.5 truncate text-[11px] font-medium text-frost-500">{label}</p>
     </div>
   );

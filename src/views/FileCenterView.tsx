@@ -103,7 +103,7 @@ export function FileCenterView() {
   const favorites = state.fileFavorites;
 
   return (
-    <div className="mx-auto w-full max-w-[1120px] px-5 py-7 md:px-8">
+    <div className="mx-auto flex h-full min-h-0 w-full max-w-[1120px] flex-col px-5 py-6 md:px-8">
       <div className="flex flex-wrap items-end justify-between gap-4">
         <div>
           <p className="text-[11.5px] font-semibold uppercase tracking-[0.2em] text-accent">File Center</p>
@@ -116,9 +116,9 @@ export function FileCenterView() {
         </div>
       </div>
 
-      <div className="mt-6 grid gap-5 lg:grid-cols-[220px_minmax(0,1fr)]">
+      <div className="mt-5 flex min-h-0 flex-1 gap-5">
         {/* Quick access rail */}
-        <aside className="space-y-5">
+        <aside className="hidden w-[220px] shrink-0 flex-col gap-5 md:flex">
           <div className="glass rounded-2xl p-3">
             <p className="px-2 pb-2 pt-1 text-[10.5px] font-semibold uppercase tracking-[0.16em] text-frost-500">
               Quick access
@@ -153,7 +153,7 @@ export function FileCenterView() {
             </div>
           </div>
 
-          <div className="glass rounded-2xl p-3">
+          <div className="glass flex min-h-0 flex-1 flex-col rounded-2xl p-3">
             <p className="px-2 pb-2 pt-1 text-[10.5px] font-semibold uppercase tracking-[0.16em] text-frost-500">
               Favorites
             </p>
@@ -162,7 +162,7 @@ export function FileCenterView() {
                 Star files or folders here and they’ll show up for one-click opening.
               </p>
             ) : (
-              <div className="accent-scroll max-h-56 space-y-0.5 overflow-y-auto">
+              <div className="accent-scroll min-h-0 flex-1 space-y-0.5 overflow-y-auto pb-1">
                 {favorites.map((fav) => (
                   <div key={fav} className="group flex items-center">
                     <button
@@ -202,10 +202,10 @@ export function FileCenterView() {
           )}
         </aside>
 
-        {/* Directory listing */}
-        <div className="glass min-w-0 rounded-2xl p-4">
+        {/* Directory listing — the page never scrolls, only the file list does */}
+        <div className="glass flex min-h-0 min-w-0 flex-1 flex-col rounded-2xl p-4">
           {/* Breadcrumb + up */}
-          <div className="flex items-center gap-2">
+          <div className="flex shrink-0 items-center gap-2">
             <button
               onClick={goUp}
               disabled={path === null}
@@ -250,10 +250,10 @@ export function FileCenterView() {
             </div>
           </div>
 
-          {/* Entries */}
-          <div className="mt-3">
+          {/* Entries — the only scrollable part of this page */}
+          <div className="accent-scroll mt-3 min-h-0 flex-1 overflow-y-auto">
             {webPreview ? (
-              <div className="py-16 text-center">
+              <div className="flex h-full min-h-[240px] flex-col items-center justify-center py-8 text-center">
                 <HardDrive size={26} className="mx-auto text-frost-500/50" />
                 <p className="mt-3 text-[14px] font-semibold text-frost-200">Your files live in the installed app</p>
                 <p className="mx-auto mt-1 max-w-sm text-[12.5px] leading-relaxed text-frost-500">
@@ -262,9 +262,11 @@ export function FileCenterView() {
                 </p>
               </div>
             ) : loading ? (
-              <p className="py-10 text-center text-[13px] text-frost-500">Reading directory…</p>
+              <div className="flex h-full min-h-[180px] items-center justify-center">
+                <p className="text-[13px] text-frost-500">Reading directory…</p>
+              </div>
             ) : sorted.length === 0 ? (
-              <div className="py-10 text-center">
+              <div className="flex h-full min-h-[180px] flex-col items-center justify-center text-center">
                 <Folder size={22} className="mx-auto text-frost-500/50" />
                 <p className="mt-2 text-[13px] text-frost-400">This folder is empty</p>
               </div>

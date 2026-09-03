@@ -16,6 +16,7 @@ export const DEFAULT_SETTINGS = {
   motion: true,
   clock: true,
   battery: true,
+  frontdoorAsked: false,
   homeOrder: DEFAULT_HOME_ORDER,
   hiddenWidgets: [] as string[],
 };

@@ -9,22 +9,17 @@ export function Backdrop() {
 
   return (
     <div className="pointer-events-none fixed inset-0 overflow-hidden">
-      {/* base gradient */}
+      {/* restrained charcoal depth */}
       <div
         className="absolute inset-0"
         style={{
-          background: `radial-gradient(120% 90% at 20% 0%, ${wallpaper.baseA} 0%, ${wallpaper.baseB} 55%, #02040a 100%)`,
+          background: `radial-gradient(120% 90% at 20% 0%, ${wallpaper.baseA} 0%, ${wallpaper.baseB} 55%, #020202 100%)`,
         }}
       />
-      {/* accent glow, bottom left — the "horizon" */}
-      <div
-        className="absolute -bottom-40 -left-40 h-[46rem] w-[46rem] rounded-full blur-3xl"
-        style={{ background: "radial-gradient(circle, var(--accent-glow) 0%, transparent 65%)", opacity: 0.8 }}
-      />
-      {/* secondary drift glow, top right */}
+      {/* Nearly invisible white light keeps the charcoal surfaces dimensional. */}
       <motion.div
         className="absolute -top-48 right-[-12rem] h-[42rem] w-[42rem] rounded-full blur-3xl"
-        style={{ background: "radial-gradient(circle, rgba(120, 150, 255, 0.13) 0%, transparent 62%)" }}
+        style={{ background: "radial-gradient(circle, rgba(255, 255, 255, 0.055) 0%, transparent 62%)" }}
         animate={motionOn ? { x: [0, -60, 0], y: [0, 40, 0] } : undefined}
         transition={{ duration: 34, repeat: Infinity, ease: "easeInOut" }}
       />
@@ -33,7 +28,7 @@ export function Backdrop() {
       {/* vignette to focus the center */}
       <div
         className="absolute inset-0"
-        style={{ background: "radial-gradient(120% 100% at 50% 40%, transparent 55%, rgba(2,4,10,0.55) 100%)" }}
+        style={{ background: "radial-gradient(120% 100% at 50% 40%, transparent 55%, rgba(0,0,0,0.58) 100%)" }}
       />
     </div>
   );

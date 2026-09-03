@@ -9,43 +9,93 @@ import {
   Timer,
 } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
-import { SectionHeader, useUi } from "../components/ui";
+import { useUi } from "../components/ui";
 import { getDesktop } from "../lib/desktop";
 import { useQyn } from "../lib/store";
 import { cn } from "../lib/utils";
 
+type ToolId = "calc" | "stopwatch" | "notes" | "screenshot" | "system";
+
+const TOOLS: Array<{ id: ToolId; label: string; sub: string; icon: typeof Calculator }> = [
+  { id: "calc", label: "Calculator", sub: "Fast math", icon: Calculator },
+  { id: "stopwatch", label: "Stopwatch", sub: "Count up", icon: Timer },
+  { id: "notes", label: "Notes", sub: "Auto-saved", icon: StickyNote },
+  { id: "screenshot", label: "Screenshot", sub: "One click", icon: Camera },
+  { id: "system", label: "System", sub: "Windows settings", icon: MonitorCog },
+];
+
 export function QuickToolsView() {
+  const [tool, setTool] = useState<ToolId>("calc");
+
   return (
-    <div className="mx-auto w-full max-w-[1120px] px-5 py-7 md:px-8">
-      <div className="flex flex-wrap items-end justify-between gap-4">
+    <div className="mx-auto flex h-full min-h-0 w-full max-w-[1180px] flex-col px-5 py-6 md:px-8">
+      <div className="flex items-end justify-between gap-4">
         <div>
           <p className="text-[11.5px] font-semibold uppercase tracking-[0.2em] text-accent">Quick Tools</p>
           <h1 className="mt-1 text-[26px] font-bold tracking-tight text-frost-100 md:text-[30px]">
             Don’t leave QynOne for something simple.
           </h1>
           <p className="mt-1.5 max-w-xl text-[13.5px] leading-relaxed text-frost-400">
-            A growing set of utilities that live right here — so the little things never pull you out of your
-            environment.
+            Utilities that live right here — pick one on the left, it fills the screen, nothing scrolls away.
           </p>
         </div>
       </div>
 
-      <div className="mt-7 grid gap-5 md:grid-cols-2">
-        <CalculatorTool />
-        <StopwatchTool />
-        <NotesTool />
-        <ScreenshotTool />
-      </div>
+      <div className="mt-5 flex min-h-0 flex-1 gap-4">
+        {/* Left tool nav — the only navigation inside this page */}
+        <aside className="glass flex w-[188px] shrink-0 flex-col rounded-2xl p-2">
+          <p className="px-2.5 pb-1.5 pt-1 text-[10px] font-semibold uppercase tracking-[0.18em] text-frost-500">Tools</p>
+          <div className="flex min-h-0 flex-1 flex-col gap-0.5 overflow-y-auto">
+            {TOOLS.map((t) => {
+              const Icon = t.icon;
+              const active = tool === t.id;
+              return (
+                <button
+                  key={t.id}
+                  onClick={() => setTool(t.id)}
+                  className={cn(
+                    "flex w-full items-center gap-2.5 rounded-xl px-2.5 py-2.5 text-left transition",
+                    active ? "bg-accent-soft text-frost-100" : "text-frost-400 hover:bg-white/5 hover:text-frost-200",
+                  )}
+                >
+                  <span className={cn("grid h-8 w-8 shrink-0 place-items-center rounded-[10px] border", active ? "border-accent-soft bg-accent-soft text-accent" : "border-white/8 bg-white/4 text-frost-400")}>
+                    <Icon size={15} />
+                  </span>
+                  <span className="min-w-0">
+                    <span className="block truncate text-[12.5px] font-semibold">{t.label}</span>
+                    <span className="block truncate text-[10px] text-frost-500">{t.sub}</span>
+                  </span>
+                </button>
+              );
+            })}
+          </div>
+        </aside>
 
-      <div className="mt-9">
-        <SectionHeader title="System shortcuts" />
-        <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
-          {SYSTEM_LINKS.map((link) => (
-            <SystemLink key={link.uri} {...link} />
-          ))}
-        </div>
+        {/* Active tool — full height, fully visible */}
+        <main className="accent-scroll min-h-0 flex-1 overflow-y-auto">
+          <AnimatedTool key={tool}>
+            {tool === "calc" && <CalculatorTool />}
+            {tool === "stopwatch" && <StopwatchTool />}
+            {tool === "notes" && <NotesTool />}
+            {tool === "screenshot" && <ScreenshotTool />}
+            {tool === "system" && <SystemShortcuts />}
+          </AnimatedTool>
+        </main>
       </div>
     </div>
+  );
+}
+
+function AnimatedTool({ children }: { children: React.ReactNode }) {
+  return (
+    <motion.div
+      initial={{ opacity: 0, y: 8 }}
+      animate={{ opacity: 1, y: 0 }}
+      transition={{ duration: 0.22, ease: [0.22, 1, 0.36, 1] }}
+      className="min-h-full"
+    >
+      {children}
+    </motion.div>
   );
 }
 
@@ -141,7 +191,7 @@ function CalculatorTool() {
       >
         <span className="no-scrollbar min-w-0 whitespace-nowrap">{display}</span>
       </div>
-      <div className="grid grid-cols-4 gap-1.5">
+      <div className="grid max-w-[340px] grid-cols-4 gap-1.5">
         {keys.map((key) => {
           const isOp = ["÷", "×", "−", "="].includes(key);
           const isClear = key === "C";
@@ -195,37 +245,38 @@ function StopwatchTool() {
 
   return (
     <ToolCard icon={<Timer size={15} />} title="Stopwatch" tagline="Count up while you work">
-      <div className="flex items-center justify-center py-2">
-        <p className="text-[42px] font-bold tabular-nums tracking-tight text-frost-100">{fmt(elapsed)}</p>
-      </div>
-      <div className="flex justify-center gap-2">
-        <button
-          onClick={() => {
-            if (running) {
-              base.current += Date.now() - startedAt.current;
+      <div className="flex min-h-[220px] flex-col items-center justify-center">
+        <p className="text-[52px] font-bold tabular-nums tracking-tight text-frost-100">{fmt(elapsed)}</p>
+        <p className="mt-1 text-[11px] uppercase tracking-[0.22em] text-frost-500">{running ? "running" : "paused"}</p>
+        <div className="mt-7 flex justify-center gap-2">
+          <button
+            onClick={() => {
+              if (running) {
+                base.current += Date.now() - startedAt.current;
+                setRunning(false);
+              } else {
+                startedAt.current = Date.now();
+                setRunning(true);
+              }
+            }}
+            className={cn(
+              "inline-flex h-10 items-center gap-2 rounded-xl px-5 text-[13px] font-semibold text-white transition active:scale-[0.98]",
+              running ? "bg-rose-500/80 hover:bg-rose-500" : "bg-[var(--accent)] hover:brightness-110",
+            )}
+          >
+            {running ? "Stop" : "Start"}
+          </button>
+          <button
+            onClick={() => {
               setRunning(false);
-            } else {
-              startedAt.current = Date.now();
-              setRunning(true);
-            }
-          }}
-          className={cn(
-            "inline-flex h-10 items-center gap-2 rounded-xl px-5 text-[13px] font-semibold text-white transition active:scale-[0.98]",
-            running ? "bg-rose-500/80 hover:bg-rose-500" : "bg-[var(--accent)] hover:brightness-110",
-          )}
-        >
-          {running ? "Stop" : "Start"}
-        </button>
-        <button
-          onClick={() => {
-            setRunning(false);
-            setElapsed(0);
-            base.current = 0;
-          }}
-          className="inline-flex h-10 items-center gap-2 rounded-xl border border-white/10 bg-white/5 px-5 text-[13px] font-semibold text-frost-300 transition hover:bg-white/10 hover:text-frost-100"
-        >
-          Reset
-        </button>
+              setElapsed(0);
+              base.current = 0;
+            }}
+            className="inline-flex h-10 items-center gap-2 rounded-xl border border-white/10 bg-white/5 px-5 text-[13px] font-semibold text-frost-300 transition hover:bg-white/10 hover:text-frost-100"
+          >
+            Reset
+          </button>
+        </div>
       </div>
     </ToolCard>
   );
@@ -241,24 +292,26 @@ function NotesTool() {
 
   return (
     <ToolCard icon={<StickyNote size={15} />} title="Notes" tagline="Sticky thoughts, saved automatically">
-      <textarea
-        value={state.notes}
-        onChange={(e) => actions.setNotes(e.target.value)}
-        placeholder="Write anything… it saves as you type."
-        className="accent-scroll h-28 w-full resize-none rounded-xl border border-white/8 bg-white/4 p-3 text-[13.5px] leading-relaxed text-frost-100 outline-none transition placeholder:text-frost-500/70 focus:border-[color-mix(in_srgb,var(--accent)_55%,transparent)] focus:bg-white/6"
-      />
-      <div className="mt-2 flex items-center justify-between">
-        <span className="text-[11.5px] tabular-nums text-frost-500">{state.notes.length} characters</span>
-        <button
-          onClick={() => {
-            actions.setNotes("");
-            toast("Notes cleared");
-          }}
-          disabled={!state.notes}
-          className="inline-flex h-8 items-center gap-1.5 rounded-lg px-2.5 text-[11.5px] font-medium text-frost-500 transition hover:bg-white/6 hover:text-frost-300 disabled:cursor-not-allowed disabled:opacity-40"
-        >
-          <Eraser size={12} /> Clear
-        </button>
+      <div className="flex min-h-[220px] flex-col">
+        <textarea
+          value={state.notes}
+          onChange={(e) => actions.setNotes(e.target.value)}
+          placeholder="Write anything… it saves as you type."
+          className="accent-scroll h-full min-h-[180px] w-full flex-1 resize-none rounded-xl border border-white/8 bg-white/4 p-3 text-[13.5px] leading-relaxed text-frost-100 outline-none transition placeholder:text-frost-500/70 focus:border-[color-mix(in_srgb,var(--accent)_55%,transparent)] focus:bg-white/6"
+        />
+        <div className="mt-2 flex items-center justify-between">
+          <span className="text-[11.5px] tabular-nums text-frost-500">{state.notes.length} characters</span>
+          <button
+            onClick={() => {
+              actions.setNotes("");
+              toast("Notes cleared");
+            }}
+            disabled={!state.notes}
+            className="inline-flex h-8 items-center gap-1.5 rounded-lg px-2.5 text-[11.5px] font-medium text-frost-500 transition hover:bg-white/6 hover:text-frost-300 disabled:cursor-not-allowed disabled:opacity-40"
+          >
+            <Eraser size={12} /> Clear
+          </button>
+        </div>
       </div>
     </ToolCard>
   );
@@ -298,12 +351,12 @@ function ScreenshotTool() {
 
   return (
     <ToolCard icon={<Camera size={15} />} title="Screenshot" tagline="Grab the screen in one click">
-      <div className="glass-soft relative overflow-hidden rounded-xl p-6 text-center">
+      <div className="glass-soft relative flex min-h-[220px] flex-col items-center justify-center overflow-hidden rounded-xl p-6 text-center">
         <div
           className="pointer-events-none absolute -right-10 -top-10 h-36 w-36 rounded-full blur-3xl"
           style={{ background: "radial-gradient(circle, var(--accent-glow), transparent 65%)", opacity: 0.6 }}
         />
-        <Camera size={26} className="relative mx-auto text-accent" />
+        <Camera size={26} className="relative text-accent" />
         <p className="relative mt-2 text-[13px] font-medium text-frost-200">
           {bridge ? "One click — saved to your Pictures folder" : "Available in the installed app"}
         </p>
@@ -319,43 +372,7 @@ function ScreenshotTool() {
 }
 
 /* ------------------------------------------------------------------ */
-/* Shared tool card                                                    */
-/* ------------------------------------------------------------------ */
-
-function ToolCard({
-  icon,
-  title,
-  tagline,
-  children,
-}: {
-  icon: React.ReactNode;
-  title: string;
-  tagline: string;
-  children: React.ReactNode;
-}) {
-  return (
-    <motion.div
-      initial={{ opacity: 0, y: 10 }}
-      animate={{ opacity: 1, y: 0 }}
-      transition={{ duration: 0.35, ease: [0.22, 1, 0.36, 1] }}
-      className="glass rounded-2xl p-5"
-    >
-      <div className="mb-4 flex items-center gap-3">
-        <span className="grid h-8 w-8 place-items-center rounded-[10px] border border-white/8 bg-white/4 text-accent">
-          {icon}
-        </span>
-        <div>
-          <h3 className="text-[14.5px] font-bold tracking-tight text-frost-100">{title}</h3>
-          <p className="text-[11.5px] text-frost-500">{tagline}</p>
-        </div>
-      </div>
-      {children}
-    </motion.div>
-  );
-}
-
-/* ------------------------------------------------------------------ */
-/* Windows settings shortcuts                                          */
+/* System shortcuts                                                    */
 /* ------------------------------------------------------------------ */
 
 const SYSTEM_LINKS: Array<{ label: string; uri: string; sub: string }> = [
@@ -368,6 +385,27 @@ const SYSTEM_LINKS: Array<{ label: string; uri: string; sub: string }> = [
   { label: "Personalization", uri: "ms-settings:personalization", sub: "Themes & colors" },
   { label: "Apps", uri: "ms-settings:appsfeatures", sub: "Installed apps" },
 ];
+
+function SystemShortcuts() {
+  return (
+    <div>
+      <div className="flex items-center gap-2">
+        <span className="grid h-8 w-8 place-items-center rounded-[10px] border border-white/8 bg-white/4 text-accent">
+          <MonitorCog size={15} />
+        </span>
+        <div>
+          <h3 className="text-[14.5px] font-bold tracking-tight text-frost-100">Windows settings</h3>
+          <p className="text-[11.5px] text-frost-500">Jump straight to the right page — no hunting through menus.</p>
+        </div>
+      </div>
+      <div className="mt-4 grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-4">
+        {SYSTEM_LINKS.map((link) => (
+          <SystemLink key={link.uri} {...link} />
+        ))}
+      </div>
+    </div>
+  );
+}
 
 function SystemLink({ label, uri, sub }: { label: string; uri: string; sub: string }) {
   const { toast } = useUi();
@@ -397,5 +435,36 @@ function SystemLink({ label, uri, sub }: { label: string; uri: string; sub: stri
         <span className="block truncate text-[11px] text-frost-500">{sub}</span>
       </span>
     </button>
+  );
+}
+
+/* ------------------------------------------------------------------ */
+/* Shared tool card                                                    */
+/* ------------------------------------------------------------------ */
+
+function ToolCard({
+  icon,
+  title,
+  tagline,
+  children,
+}: {
+  icon: React.ReactNode;
+  title: string;
+  tagline: string;
+  children: React.ReactNode;
+}) {
+  return (
+    <div className="glass rounded-2xl p-5">
+      <div className="mb-4 flex items-center gap-3">
+        <span className="grid h-8 w-8 place-items-center rounded-[10px] border border-white/8 bg-white/4 text-accent">
+          {icon}
+        </span>
+        <div>
+          <h3 className="text-[14.5px] font-bold tracking-tight text-frost-100">{title}</h3>
+          <p className="text-[11.5px] text-frost-500">{tagline}</p>
+        </div>
+      </div>
+      {children}
+    </div>
   );
 }

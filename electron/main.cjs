@@ -14,7 +14,7 @@
  *    or touches the real applications on the PC.
  */
 
-const { app, BrowserWindow, ipcMain, shell } = require("electron");
+const { app, BrowserWindow, ipcMain, shell, screen } = require("electron");
 const fs = require("node:fs");
 const os = require("node:os");
 const fsPromises = require("node:fs/promises");
@@ -29,6 +29,8 @@ app.setName("QynOne");
 /* Window                                                              */
 /* ------------------------------------------------------------------ */
 
+let mainWindow = null;
+
 function createWindow() {
   const win = new BrowserWindow({
     width: 1500,
@@ -36,7 +38,7 @@ function createWindow() {
     minWidth: 1024,
     minHeight: 640,
     show: false,
-    backgroundColor: "#05080f",
+    backgroundColor: "#070809",
     title: "QynOne",
     webPreferences: {
       preload: path.join(__dirname, "preload.cjs"),
@@ -47,6 +49,7 @@ function createWindow() {
     },
   });
 
+  mainWindow = win;
   win.once("ready-to-show", () => win.show());
 
   if (IS_DEV) {
@@ -55,8 +58,157 @@ function createWindow() {
     win.loadFile(path.join(__dirname, "..", "dist", "index.html"));
   }
 
+  /* The floating Nex lives and dies with QynOne: closing the main window
+     hides it too (it never stays behind as an orphan overlay). */
+  win.on("closed", () => {
+    if (mainWindow === win) mainWindow = null;
+    closeFloatWindow();
+  });
+
   return win;
 }
+
+/* ------------------------------------------------------------------ */
+/* Floating Nex — an always-on-top companion window                    */
+/* ------------------------------------------------------------------ */
+
+let floatWindow = null;
+
+const FLOAT_W = 300;
+const FLOAT_H = 210;
+
+function isFloatAlive() {
+  return Boolean(floatWindow && !floatWindow.isDestroyed());
+}
+
+function floatState() {
+  return { open: isFloatAlive() };
+}
+
+function broadcastFloatState() {
+  for (const win of BrowserWindow.getAllWindows()) {
+    win.webContents.send("qyn:float-changed", floatState());
+  }
+}
+
+function positionFloatBottomLeft(win) {
+  try {
+    const display = screen.getPrimaryDisplay();
+    const wa = display.workArea;
+    const [bw, bh] = win.getSize();
+    win.setPosition(Math.round(wa.x + 20), Math.round(wa.y + wa.height - bh - 20), false);
+  } catch {
+    // keep the OS default position
+  }
+}
+
+function openFloatWindow() {
+  if (isFloatAlive()) {
+    floatWindow.showInactive();
+    return floatWindow;
+  }
+  const win = new BrowserWindow({
+    width: FLOAT_W,
+    height: FLOAT_H,
+    show: false,
+    frame: false,
+    transparent: true,
+    resizable: false,
+    minimizable: false,
+    maximizable: false,
+    fullscreenable: false,
+    alwaysOnTop: true,
+    skipTaskbar: true,
+    hasShadow: false,
+    backgroundColor: "#00000000",
+    title: "Nex",
+    webPreferences: {
+      preload: path.join(__dirname, "preload.cjs"),
+      contextIsolation: true,
+      nodeIntegration: false,
+      sandbox: true,
+      spellcheck: false,
+      backgroundThrottling: false,
+    },
+  });
+  floatWindow = win;
+
+  /* Stay above fullscreen/borderless games. Opened with showInactive() so
+     it never steals focus from the game; clicking it (or double-clicking to
+     close) still works because the window remains focusable. */
+  win.setAlwaysOnTop(true, "screen-saver");
+  positionFloatBottomLeft(win);
+
+  win.once("ready-to-show", () => win.showInactive());
+
+  if (IS_DEV) {
+    win.loadURL(`${process.env.VITE_DEV_SERVER_URL}#float`);
+  } else {
+    win.loadFile(path.join(__dirname, "..", "dist", "index.html"), { hash: "float" });
+  }
+
+  win.on("closed", () => {
+    if (floatWindow === win) floatWindow = null;
+    broadcastFloatState();
+  });
+
+  broadcastFloatState();
+  return win;
+}
+
+function closeFloatWindow() {
+  if (isFloatAlive()) floatWindow.close();
+}
+
+ipcMain.handle("qyn:float-toggle", () => {
+  if (isFloatAlive()) {
+    closeFloatWindow();
+    return { open: false };
+  }
+  openFloatWindow();
+  return { open: true };
+});
+
+ipcMain.handle("qyn:float-state", () => floatState());
+
+ipcMain.handle("qyn:float-close", () => {
+  closeFloatWindow();
+  return floatState();
+});
+
+/* ------------------------------------------------------------------ */
+/* Start with Windows — a real per-user startup entry (HKCU Run)       */
+/* ------------------------------------------------------------------ */
+
+function autostartAvailable() {
+  return process.platform === "win32";
+}
+
+function autostartEnabled() {
+  try {
+    if (!autostartAvailable()) return false;
+    return app.getLoginItemSettings().openAtLogin === true;
+  } catch {
+    return false;
+  }
+}
+
+ipcMain.handle("qyn:autostart-get", () => ({
+  enabled: autostartEnabled(),
+  available: autostartAvailable(),
+}));
+
+ipcMain.handle("qyn:autostart-set", (_event, enabled) => {
+  if (!autostartAvailable()) {
+    return { ok: false, enabled: false, error: "Startup with Windows is only available on Windows." };
+  }
+  try {
+    app.setLoginItemSettings({ openAtLogin: Boolean(enabled), path: process.execPath });
+    return { ok: true, enabled: autostartEnabled() };
+  } catch (e) {
+    return { ok: false, enabled: autostartEnabled(), error: String((e && e.message) || e) };
+  }
+});
 
 /* ------------------------------------------------------------------ */
 /* State file                                                          */
@@ -128,13 +280,12 @@ function walkShortcuts(dir, query, out, seen, depth) {
 async function findShortcuts(query) {
   if (typeof query !== "string") return [];
   const q = query.trim().toLowerCase();
-  if (!q) return [];
   const out = [];
   const seen = new Set();
   for (const root of shortcutRoots()) {
     walkShortcuts(root, q, out, seen, 0);
   }
-  return out.slice(0, 12);
+  return out.slice(0, q ? 24 : 400);
 }
 
 /**
@@ -598,6 +749,38 @@ ipcMain.handle("qyn:open-path", (_event, p) => openPath(p));
 ipcMain.handle("qyn:search-files", (_event, query) => searchFiles(query));
 
 ipcMain.handle("qyn:save-screenshot", (_event, dataUrl) => saveScreenshot(dataUrl));
+
+/* ------------------------------------------------------------------ */
+/* Start with Windows — a real per-user Run entry (HKCU).               */
+/* Electron's login-item API points the entry at the actual QynOne      */
+/* executable, at the current user's token — no admin, no Startup       */
+/* folder hacks. In dev it's disabled because process.execPath is       */
+/* electron.exe, which would autostart the wrong thing.                 */
+/* ------------------------------------------------------------------ */
+
+function autostartState() {
+  try {
+    const s = app.getLoginItemSettings();
+    return { enabled: Boolean(s.openAtLogin), available: !IS_DEV };
+  } catch {
+    return { enabled: false, available: false };
+  }
+}
+
+ipcMain.handle("qyn:autostart-get", () => autostartState());
+
+ipcMain.handle("qyn:autostart-set", (_event, enabled) => {
+  try {
+    if (IS_DEV) {
+      return { ok: false, enabled: false, error: "Start with Windows is only available in the installed QynOne app." };
+    }
+    app.setLoginItemSettings({ openAtLogin: Boolean(enabled) });
+    const after = app.getLoginItemSettings();
+    return { ok: true, enabled: Boolean(after.openAtLogin) };
+  } catch (e) {
+    return { ok: false, enabled: false, error: String((e && e.message) || e) };
+  }
+});
 
 /* ------------------------------------------------------------------ */
 /* App lifecycle                                                       */

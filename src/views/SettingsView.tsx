@@ -6,6 +6,7 @@ import {
   Download,
   History,
   Palette,
+  Power,
   RotateCcw,
   SlidersHorizontal,
   Sparkles,
@@ -15,7 +16,7 @@ import {
 import { useEffect, useRef, useState } from "react";
 import { Avatar, SectionHeader, Toggle, useUi } from "../components/ui";
 import { listOllamaModels, PROVIDERS, useAi } from "../lib/ai";
-import { isDesktop } from "../lib/desktop";
+import { getDesktop, isDesktop } from "../lib/desktop";
 import { useQyn } from "../lib/store";
 import { ACCENT_LIST, WALLPAPER_LIST } from "../lib/theme";
 import type { AccentId, QynState, ViewId, WallpaperId } from "../lib/types";
@@ -176,6 +177,9 @@ export function SettingsView({ onNavigate }: { onNavigate: (v: ViewId) => void }
             </div>
           </section>
 
+          {/* ---- Startup ---- */}
+          <StartupSection />
+
           {/* ---- Interface ---- */}
           <section className="glass rounded-2xl p-5">
             <SectionHeader title="Interface" icon={<SlidersHorizontal size={13} className="text-accent" />} />
@@ -291,6 +295,79 @@ export function SettingsView({ onNavigate }: { onNavigate: (v: ViewId) => void }
         </div>
       </motion.div>
     </div>
+  );
+}
+
+/* ------------------------------------------------------------------ */
+/* Startup — launch QynOne with Windows via a real OS login item.      */
+/* ------------------------------------------------------------------ */
+
+function StartupSection() {
+  const { toast } = useUi();
+  const [enabled, setEnabled] = useState(false);
+  const [ready, setReady] = useState(false);
+
+  useEffect(() => {
+    let alive = true;
+    const bridge = getDesktop();
+    if (!bridge) return;
+    bridge
+      .autostartGet()
+      .then((r) => {
+        if (!alive) return;
+        setEnabled(r.enabled);
+        setReady(r.available);
+      })
+      .catch(() => {
+        if (alive) setReady(false);
+      });
+    return () => {
+      alive = false;
+    };
+  }, []);
+
+  /* A browser can't register OS startup — this section exists only in
+     the installed desktop app. */
+  if (!isDesktop()) return null;
+
+  const toggle = (next: boolean) => {
+    setEnabled(next);
+    const bridge = getDesktop();
+    if (!bridge) return;
+    bridge
+      .autostartSet(next)
+      .then((r) => {
+        setEnabled(r.enabled);
+        if (!r.ok) {
+          toast(r.error ?? "Couldn't update the startup setting", {
+            icon: <AlertTriangle size={15} className="text-amber-300" />,
+          });
+        }
+      })
+      .catch(() => {
+        setEnabled(false);
+        toast("Couldn't update the startup setting", {
+          icon: <AlertTriangle size={15} className="text-amber-300" />,
+        });
+      });
+  };
+
+  return (
+    <section className="glass rounded-2xl p-5">
+      <SectionHeader title="Startup" icon={<Power size={13} className="text-accent" />} />
+      <div className="space-y-1">
+        <SettingRow
+          title="Start QynOne with Windows"
+          description="Opens automatically after you sign in — straight into the Hello screen, then Home."
+        >
+          <Toggle checked={enabled} disabled={!ready} onChange={toggle} />
+        </SettingRow>
+      </div>
+      <p className="mt-2 border-t border-white/6 px-3 pt-3 text-[11px] leading-relaxed text-frost-500">
+        Uses a normal Windows startup entry for your user account (HKCU Run) — no admin rights needed. Turn it off
+        here any time.
+      </p>
+    </section>
   );
 }
 

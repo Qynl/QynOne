@@ -5,29 +5,29 @@
     "Inter", "Segoe UI", ui-sans-serif, system-ui, -apple-system, "Helvetica Neue", Arial,
     sans-serif;
 
-  /* Deep ink surfaces — cool navy blacks */
-  --color-ink-950: #04070d;
-  --color-ink-900: #070c16;
-  --color-ink-850: #0a1120;
-  --color-ink-800: #0e1729;
-  --color-ink-700: #16223a;
-  --color-ink-600: #1e2d4d;
+  /* Neutral ink surfaces — charcoal, black, and white */
+  --color-ink-950: #050606;
+  --color-ink-900: #090a0b;
+  --color-ink-850: #101112;
+  --color-ink-800: #17191b;
+  --color-ink-700: #222528;
+  --color-ink-600: #303438;
 
-  /* Frost text — cool, desaturated blues */
-  --color-frost-100: #e9effa;
-  --color-frost-200: #cdd9ef;
-  --color-frost-300: #a8badb;
-  --color-frost-400: #7e93ba;
-  --color-frost-500: #5d7198;
-  --color-frost-600: #43557a;
+  /* Frost text — neutral, low-glare grays */
+  --color-frost-100: #f1f3f4;
+  --color-frost-200: #d7dadd;
+  --color-frost-300: #b4b8bc;
+  --color-frost-400: #8b9095;
+  --color-frost-500: #686d72;
+  --color-frost-600: #4b5055;
 }
 
 :root {
-  --accent: #5b8cff;
-  --accent-soft: rgba(91, 140, 255, 0.13);
-  --accent-glow: rgba(91, 140, 255, 0.28);
-  --wallpaper-1: #0b1428;
-  --wallpaper-2: #060a15;
+  --accent: #d9e0e8;
+  --accent-soft: rgba(217, 224, 232, 0.1);
+  --accent-glow: rgba(217, 224, 232, 0.16);
+  --wallpaper-1: #171a1f;
+  --wallpaper-2: #070809;
 }
 
 * {
@@ -90,7 +90,7 @@ textarea {
    .glass-strong floating panels/overlays (blur 36) */
 
 .glass {
-  background: rgba(13, 21, 38, 0.5);
+  background: rgba(22, 24, 27, 0.52);
   border: 1px solid rgba(255, 255, 255, 0.08);
   backdrop-filter: blur(16px) saturate(150%);
   -webkit-backdrop-filter: blur(16px) saturate(150%);
@@ -100,7 +100,7 @@ textarea {
 }
 
 .glass-soft {
-  background: rgba(11, 18, 33, 0.42);
+  background: rgba(18, 20, 22, 0.44);
   border: 1px solid rgba(255, 255, 255, 0.07);
   backdrop-filter: blur(12px) saturate(140%);
   -webkit-backdrop-filter: blur(12px) saturate(140%);
@@ -108,7 +108,7 @@ textarea {
 }
 
 .glass-deep {
-  background: rgba(11, 18, 33, 0.55);
+  background: rgba(15, 17, 19, 0.58);
   border: 1px solid rgba(255, 255, 255, 0.07);
   backdrop-filter: blur(24px) saturate(160%);
   -webkit-backdrop-filter: blur(24px) saturate(160%);
@@ -118,7 +118,7 @@ textarea {
 }
 
 .glass-strong {
-  background: rgba(15, 22, 40, 0.82);
+  background: rgba(18, 20, 22, 0.84);
   border: 1px solid rgba(255, 255, 255, 0.1);
   backdrop-filter: blur(36px) saturate(170%);
   -webkit-backdrop-filter: blur(36px) saturate(170%);
@@ -178,4 +178,24 @@ textarea {
 }
 .no-scrollbar {
   scrollbar-width: none;
+}
+
+/* ---- Floating Nex companion window ----
+   The always-on-top overlay is a transparent frameless Electron window;
+   only the eyes paint anything, and the empty margin is a drag handle so
+   the user can park Nex wherever they want on screen. */
+body.qyn-float {
+  background: transparent !important;
+}
+body.qyn-float #root {
+  background: transparent;
+}
+
+.qyn-float-drag {
+  -webkit-app-region: drag;
+  cursor: default;
+}
+
+.qyn-float-nodrag {
+  -webkit-app-region: no-drag;
 }

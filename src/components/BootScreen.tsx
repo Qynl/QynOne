@@ -1,65 +1,61 @@
-import { motion } from "framer-motion";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { AiFace } from "./AiFace";
 
 /**
- * Full-screen boot animation — Nex opens his eyes while QynOne loads.
- * Shown for a beat on every launch, then fades out.
+ * The single pre-app screen, kept truly minimal: nothing but Nex's eyes
+ * waking up, a soft glow, and one hairline that fills — then App unmounts
+ * it the instant the bar is full. No fade, no pause.
  */
-export function BootScreen({ done }: { done: boolean }) {
-  const [progress, setProgress] = useState(0);
+export function BootScreen() {
+  const [pct, setPct] = useState(0);
+  const rafRef = useRef<number | null>(null);
 
+  /* Fill the hairline over ~1.9s with a gentle ease — frame by frame,
+     so the progress is always actually visible. */
   useEffect(() => {
-    const t = setInterval(() => {
-      setProgress((p) => Math.min(100, p + Math.random() * 14 + 6));
-    }, 120);
-    return () => clearInterval(t);
+    const start = performance.now();
+    const duration = 1900;
+    const tick = (now: number) => {
+      const t = Math.min(1, (now - start) / duration);
+      const eased = t < 0.5 ? 2 * t * t : 1 - Math.pow(-2 * t + 2, 2) / 2;
+      setPct(Math.round(eased * 100));
+      if (t < 1) rafRef.current = requestAnimationFrame(tick);
+    };
+    rafRef.current = requestAnimationFrame(tick);
+    return () => {
+      if (rafRef.current !== null) cancelAnimationFrame(rafRef.current);
+    };
   }, []);
 
   return (
-    <motion.div
-      initial={{ opacity: 1 }}
-      animate={{ opacity: done ? 0 : 1 }}
-      transition={{ duration: 0.55, ease: "easeInOut" }}
-      style={{ background: "var(--wallpaper-2)", pointerEvents: done ? "none" : "auto" }}
+    <div
+      style={{ background: "var(--wallpaper-2)" }}
       className="fixed inset-0 z-[100] grid place-items-center overflow-hidden"
-      aria-hidden={done}
+      aria-hidden
     >
-      {/* subtle grid + glow */}
-      <div className="wall-grid absolute inset-0" />
+      {/* one soft pool of light behind the eyes — nothing else */}
       <div
-        className="absolute left-1/2 top-1/2 h-[420px] w-[680px] -translate-x-1/2 -translate-y-1/2 rounded-full blur-3xl"
-        style={{ background: "radial-gradient(ellipse, var(--accent-glow), transparent 68%)", opacity: 0.5 }}
+        className="absolute left-1/2 top-1/2 h-[300px] w-[520px] -translate-x-1/2 -translate-y-1/2 rounded-full blur-3xl"
+        style={{ background: "radial-gradient(ellipse, var(--accent-glow), transparent 70%)", opacity: 0.4 }}
       />
 
       <div className="relative flex flex-col items-center">
-        <AiFace emotion="boot" size={190} />
-        <motion.p
-          initial={{ opacity: 0, y: 8 }}
-          animate={{ opacity: 1, y: 0 }}
-          transition={{ delay: 0.45, duration: 0.5 }}
-          className="mt-7 text-[15px] font-bold tracking-[0.34em] text-frost-200"
-        >
-          QYNONE
-        </motion.p>
-        <motion.p
-          initial={{ opacity: 0 }}
-          animate={{ opacity: 1 }}
-          transition={{ delay: 0.7, duration: 0.5 }}
-          className="mt-1.5 text-[11px] font-medium uppercase tracking-[0.22em] text-frost-500"
-        >
-          your PC starts here
-        </motion.p>
+        <AiFace emotion="boot" size={210} />
 
-        <div className="mt-6 h-[3px] w-56 overflow-hidden rounded-full bg-white/8">
-          <motion.div
+        {/* one subtle hairline that fills while Nex wakes up — nothing more.
+            The fill is driven by rAF, not a CSS/library animation, so it is
+            always visibly progressing. */}
+        <div className="mt-9 h-[2px] w-[140px] overflow-hidden rounded-full bg-white/[0.08]">
+          <div
             className="h-full rounded-full"
-            style={{ background: "linear-gradient(90deg, var(--accent), #8ef0e2)" }}
-            animate={{ width: `${Math.min(100, progress)}%` }}
-            transition={{ duration: 0.15 }}
+            style={{
+              width: `${pct}%`,
+              background: "linear-gradient(90deg, rgba(255,255,255,0.25), rgba(255,255,255,0.85))",
+              boxShadow: "0 0 12px rgba(255,255,255,0.35)",
+            }}
           />
         </div>
       </div>
-    </motion.div>
+    </div>
   );
 }
