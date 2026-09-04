@@ -6,9 +6,11 @@ import { CALM_BASE, EMOTION_LABELS } from "../lib/emotion";
  * EmotionDebugger — development-only. A live readout of the emotion engine:
  * the current decision, its confidence / priority / intensity / duration,
  * the base state it will return to, active cooldowns and the last few
- * decisions. Only rendered when import.meta.env.DEV.
+ * decisions. Never shown by default: the AiView host only renders it when
+ * the developer opts in (Ctrl+Shift+D or ?emotionDebug=1), and it carries
+ * its own close button.
  */
-export function EmotionDebugger() {
+export function EmotionDebugger({ onClose }: { onClose?: () => void }) {
   const { emotion, emotionDebug, intensity, busy } = useAi();
   if (!emotionDebug) return null;
 
@@ -37,8 +39,19 @@ export function EmotionDebugger() {
     >
       <div className="flex items-center justify-between">
         <p className="text-[9px] font-semibold uppercase tracking-[0.2em] text-amber-300/90">Nex emotion engine · dev</p>
-        <span className={`rounded px-1.5 py-0.5 text-[9px] font-semibold ${calm ? "bg-white/5 text-frost-500" : "bg-amber-400/15 text-amber-300"}`}>
-          {busy ? "busy" : calm ? "calm base" : "reacting"}
+        <span className="flex items-center gap-1.5">
+          <span className={`rounded px-1.5 py-0.5 text-[9px] font-semibold ${calm ? "bg-white/5 text-frost-500" : "bg-amber-400/15 text-amber-300"}`}>
+            {busy ? "busy" : calm ? "calm base" : "reacting"}
+          </span>
+          {onClose && (
+            <button
+              onClick={onClose}
+              title="Hide the emotion debugger"
+              className="pointer-events-auto rounded px-1 text-[11px] leading-none text-frost-500 transition hover:bg-white/10 hover:text-frost-200"
+            >
+              ✕
+            </button>
+          )}
         </span>
       </div>
       <div className="mt-2 grid grid-cols-[76px_1fr] gap-x-2 gap-y-0.5">

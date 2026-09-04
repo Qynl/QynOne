@@ -27,6 +27,18 @@ export function AiView({ onNavigate }: { onNavigate: (view: ViewId) => void }) {
   const { messages, busy, emotion, tools, send, clearChat, activity, stopSession, stopRequested, intensity } = useAi();
   const mcp = useMcp();
   const music = useMusic();
+  const [debugOpen, setDebugOpen] = useState(() => new URLSearchParams(window.location.search).has("emotionDebug"));
+  /* Dev-only toggle for the emotion debugger — never auto-opens. */
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if ((e.ctrlKey || e.metaKey) && e.shiftKey && e.key.toLowerCase() === "d") {
+        e.preventDefault();
+        setDebugOpen((v) => !v);
+      }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, []);
   const [draft, setDraft] = useState("");
   const [pendingFiles, setPendingFiles] = useState<AiAttachment[]>([]);
   const [picking, setPicking] = useState(false);
@@ -396,8 +408,11 @@ export function AiView({ onNavigate }: { onNavigate: (view: ViewId) => void }) {
           <AgentActivityMini onOpen={() => setTab("activity")} />
         </aside>
       </div>
-      {/* Development-only emotion debugger — live decisions, tunable. */}
-      {import.meta.env.DEV && <EmotionDebugger />}
+      {/* Emotion debugger — dev-only AND opt-in. It never opens by itself:
+          show it only via Ctrl/Cmd+Shift+D or ?emotionDebug=1, and it can be
+          closed from the panel itself. In packaged builds DEV is false and it
+          can never appear. */}
+      {debugOpen && import.meta.env.DEV && <EmotionDebugger onClose={() => setDebugOpen(false)} />}
     </div>
   );
 }
