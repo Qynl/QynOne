@@ -33,7 +33,7 @@ export const MCP_PRESETS: McpPreset[] = [
   {
     key: "unreal",
     label: "Unreal Engine",
-    blurb: "Unreal MCP lives inside the editor (UE 5.6+). Enable the Unreal MCP + All Toolsets plugins, start the server (ModelContextProtocol.StartServer), and Nex connects over local HTTP.",
+    blurb: "Unreal MCP lives inside the editor (UE 5.8). Enable the Unreal MCP + All Toolsets plugins, start the server (ModelContextProtocol.StartServer), and Nex connects over local HTTP.",
     build: () => ({
       name: "Unreal Engine",
       transport: "http",

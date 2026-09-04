@@ -3,6 +3,8 @@ import type { ReactNode } from "react";
 import { getDesktop, isFloatMode } from "./desktop";
 import type { AiConfig } from "./desktop";
 import { mcpFunctionName, useMcp } from "./mcp";
+import { useNexEmotions } from "./emotion";
+import type { EmotionDebug, NexEvent } from "./emotion";
 import { clearNowPlaying, playOnAmazonMusic, setNowPlaying } from "./music";
 import systemPromptMd from "../system-prompt.md?raw";
 import { useQyn } from "./store";
@@ -209,7 +211,7 @@ function buildSystemPrompt(memorySummary: string, engines: string[] = []): strin
     : "You have no long-term memory of this user yet. When they tell you something personal (a name, a favorite, a preference, an ongoing project), use the remember tool to save it.";
   const engineBlock =
     engines.length > 0
-      ? `\n- Autonomous build mode is active (connected: ${engines.join(", ")}). When the user gives you a development goal, treat it as a project you own: plan, build, test through the engine's own tools, inspect what you made, critically evaluate it, then improve and test again — without waiting for permission between steps. You have a generous step budget this session; use it. Multiple tool calls in one step run in parallel, so batch independent reads and edits together. Narrate your plan and reasoning in your reply text between tool steps — the user watches a live Agent Activity trace of your thoughts, tool calls and results. The user can press Stop at any moment; if interrupted, acknowledge it, state exactly where you stopped and what remains, and never pretend unfinished work is done. Only pause to ask when a decision genuinely cannot be inferred or would substantially change the result. Never stop at "a basic version works" when the request implies more; finish with what you completed, what you verified, and what you would improve next.`
+      ? `\n- Autonomous build mode is active (connected: ${engines.join(", ")}). When the user gives you a development goal, treat it as a project you own: plan, build, test through the engine's own tools, inspect what you made, critically evaluate it, then improve and test again — without waiting for permission between steps. You have a generous step budget this session; use it. Multiple tool calls in one step run in parallel, so batch independent reads and edits together. Narrate your plan and reasoning in your reply text between tool steps — the user watches a live Agent Activity trace of your thoughts, tool calls and results. The user can press Stop at any moment; if interrupted, acknowledge it, state exactly where you stopped and what remains, and never pretend unfinished work is done. Only pause to ask when a decision genuinely cannot be inferred or would substantially change the result. Never stop at "a basic version works" when the request implies more. Before finishing, run /self-review and iterate until the quality score is honestly good; then finish with what you completed, what you verified, and what you would improve next.`
       : "";
   return `${systemPromptMd.trim()}\n\n---\n\n## Runtime context (refreshed on every request)\n\n- Today: ${now.toLocaleDateString(undefined, { weekday: "long", year: "numeric", month: "long", day: "numeric" })}. Current time: ${now.toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit" })}.\n- Vault budget: max ${VAULT_MAX_NOTES} notes, ${(NOTE_MAX_CHARS / 1000).toFixed(0)} KB per note. Memory file: ${MEMORY_PATH} (capped at ${(MEMORY_MAX_CHARS / 1000).toFixed(1)} KB).\n- Connected MCP engines right now: ${engines.length > 0 ? engines.join(", ") : "none — if the user asks for engine work (Roblox, Unreal, …), say you need the QynOne desktop app and the engine running with its MCP server enabled (Settings → Connections)."}${engineBlock}\n- ${memoryBlock}`;
 }
@@ -229,6 +231,7 @@ async function chatOnce(
   messages: Array<Record<string, unknown>>,
   tools: AiToolDef[],
   signal?: AbortSignal,
+  opts?: { temperature?: number; maxTokens?: number },
 ): Promise<ChatResult> {
   const endpoint = resolvedEndpoint(cfg);
   const headers: Record<string, string> = { "Content-Type": "application/json" };
@@ -237,8 +240,9 @@ async function chatOnce(
     model,
     messages,
     stream: false,
-    temperature: 0.6,
+    temperature: opts?.temperature ?? 0.6,
   };
+  if (opts?.maxTokens) body.max_tokens = opts.maxTokens;
   if (tools.length > 0) {
     body.tools = tools.map((t) => ({
       type: "function",
@@ -294,32 +298,6 @@ async function resolveModel(cfg: AiConfig): Promise<string> {
 const PERSONAL_RE =
   /(my name is|call me|i am |i'm |i (?:like|love|prefer|play|use|work|hate|want|need|study|read|watch|enjoy|started|build|built|make|made)|my favorite|my (?:game|app|pc|computer|project|job|birthday|hobby|school|team|dog|cat|name)|remember (?:that|this)|i live in|i go to|i work at|i study)/i;
 
-/**
- * Real, deterministic tone reading of the user's message — the eyes react
- * to what the user says and how they say it (frustration, joy, excitement,
- * gratitude, sadness, confusion, sleepiness, …). Rule-based on the actual
- * words, so it is honest: it reacts to what the user typed or said.
- */
-function detectTone(text: string): AiEmotion | null {
-  const t = text.trim();
-  if (!t) return null;
-  const anger =
-    /\b(shut up|hate this|screw (this|it|that)|wtf|damn( it)?!|annoying|terrible|worst|broken again|not working|fix it now|useless)\b|!{3,}/i;
-  const sad = /\b(sad|depressed|miss (you|it|him|her)|bad day|lonely|cry(ing)?|heartbroken|down)\b/i;
-  const praise = /\b(thanks|thank you|good (job|work|one)|great|awesome|amazing|nice|love (it|this|you)|perfect|brilliant)\b/i;
-  const cheer = /(^|\s)(yes!|wo+ho+!|ya?ay|let's go|hyped|party time)|!{2,}/i;
-  const confusion = /\b(huh\?|what\?|why\?|confus(ed|ing)|doesn'?t make sense|i don'?t get it)\b/i;
-  const sleepy = /\b(sleepy|exhausted|going to bed|good night|can'?t keep my eyes open)\b/i;
-  if (anger.test(t)) return "frustrated";
-  if (sad.test(t)) return "concerned";
-  if (praise.test(t)) return "grateful";
-  if (cheer.test(t)) return "excited";
-  if (confusion.test(t)) return "confused";
-  if (sleepy.test(t)) return "sleepy";
-  if (/[?？]{1,}$/.test(t)) return "curious";
-  return null;
-}
-
 /** Ask the model to extract durable personal facts from an exchange. */
 async function extractMemoryFacts(cfg: AiConfig, model: string, userText: string, aiText: string): Promise<string[]> {
   const res = await chatOnce(
@@ -362,11 +340,39 @@ async function extractMemoryFacts(cfg: AiConfig, model: string, userText: string
  */
 const TOOL_RESULT_MAX = 12000;
 
+/** Engine tools whose outcome matters enough to feel — builds, tests, runs,
+    reviews. */
+const IMPORTANT_TOOL_RE = /(build|compile|playtest|publish|generate|test|execute|run|create|insert|script|review)/i;
+
 function clampToolResult(out: string): string {
   if (out.length <= TOOL_RESULT_MAX) return out;
   const head = Math.floor(TOOL_RESULT_MAX * 0.7);
   const tail = TOOL_RESULT_MAX - head;
   return `${out.slice(0, head)}\n\n[… ${out.length - TOOL_RESULT_MAX} characters omitted …]\n\n${out.slice(-tail)}`;
+}
+
+/**
+ * Long engine sessions resend every accumulated tool result to the model on
+ * every step, so context grows without bound and each step gets slower. Old
+ * tool messages keep their call IDs (OpenAI-compatible APIs require the tool
+ * result to follow its tool_calls entry) but their content is compressed in
+ * place: recent results stay verbatim, older ones collapse to a small digest.
+ */
+function compressOldToolResults(msgs: Array<Record<string, unknown>>, keep = 6): void {
+  const toolIdx: number[] = [];
+  msgs.forEach((m, i) => {
+    if (m.role === "tool") toolIdx.push(i);
+  });
+  const keepFrom = toolIdx.length - keep;
+  for (let k = 0; k < keepFrom; k++) {
+    const idx = toolIdx[k];
+    const content = String(msgs[idx].content ?? "");
+    if (content.length <= 1400) continue;
+    msgs[idx] = {
+      ...msgs[idx],
+      content: `${content.slice(0, 800)}\n\n[… older result compressed: ${content.length} characters …]\n\n${content.slice(-180)}`,
+    };
+  }
 }
 
 /**
@@ -434,6 +440,12 @@ interface AiValue {
   stopSession: () => void;
   /** Whether the user asked to interrupt the session that is running now. */
   stopRequested: boolean;
+  /** Rich contextual emotion event — the engine decides what Nex feels. */
+  react: (event: NexEvent) => void;
+  /** Last emotion decision (dev debugger). */
+  emotionDebug: EmotionDebug | null;
+  /** 0..1 strength of the current emotion (visual modulation). */
+  intensity: number;
 }
 
 const AiContext = createContext<AiValue | null>(null);
@@ -474,13 +486,20 @@ export function AiProvider({
   const [busy, setBusy] = useState(false);
   const [stopRequested, setStopRequested] = useState(false);
   const stopRef = useRef(false);
+  /* how many times Nex has self-reviewed a build in the current session —
+     bounds the quality loop so it can't spin forever */
+  const reviewCountRef = useRef(0);
   const sessionAbortRef = useRef<AbortController | null>(null);
   const [voiceEnabled, setVoiceEnabled] = useState(false);
-  const [emotion, setEmotion] = useState<AiEmotion>("idle");
   const [config, setConfig] = useState<AiConfig>({ provider: "ollama", endpoint: "", model: "", key: "" });
   const configRef = useRef(config);
   configRef.current = config;
-  const emotionTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  /* The emotion engine — one decision layer for every feeling Nex shows.
+     It owns the emotion state, base-state tracking, overlays, cooldowns,
+     confidence gating and the idle drift ladder. */
+  const nexEmotions = useNexEmotions({ busy, voiceEnabled });
+  const { emotion, intensity: emotionIntensity, debug: emotionDebug, react, set: engineSetEmotion } = nexEmotions;
 
   useEffect(() => {
     let alive = true;
@@ -527,13 +546,11 @@ export function AiProvider({
     }
   }, [floatOpen, isFloatRenderer, voiceEnabled]);
 
+  /* Direct emotion sets go through the engine so they respect priorities,
+     cooldowns and base-state restore. */
   const setEmotionFor = useCallback((e: AiEmotion, durationMs?: number) => {
-    setEmotion(e);
-    if (emotionTimer.current) clearTimeout(emotionTimer.current);
-    if (durationMs) {
-      emotionTimer.current = setTimeout(() => setEmotion("idle"), durationMs);
-    }
-  }, []);
+    engineSetEmotion(e, durationMs);
+  }, [engineSetEmotion]);
 
   const announce = useCallback((rawText: string, nextEmotion?: AiEmotion, speakIt = false) => {
     const text = rawText.trim();
@@ -1108,8 +1125,42 @@ export function AiProvider({
           return "Music stopped — headphones off.";
         },
       },
+      {
+        name: "self-review",
+        usage: "/self-review",
+        description:
+          "Critically evaluate the work you just built in the connected engine before you finish. Call this whenever you complete a significant chunk of work or before writing your final summary: is the result actually good enough for what the user asked? Be honest — a low score means you keep improving, it never means you give up.",
+        parameters: {
+          type: "object",
+          properties: {
+            work: { type: "string", description: "What you built and tested so far, 1-3 sentences." },
+            quality: { type: "number", description: "Honest 1-10 score: how close is the result to the user's goal?" },
+            issues: { type: "array", items: { type: "string" }, description: "Concrete problems or gaps you found — 1-5 items." },
+            next: { type: "array", items: { type: "string" }, description: "What you will improve next, in order of impact." },
+          },
+          required: ["work", "quality", "issues"],
+        },
+        run: (args) => {
+          const quality = Math.max(1, Math.min(10, Math.round(Number(args.quality) || 1)));
+          const issues = Array.isArray(args.issues) ? args.issues.map(String).filter(Boolean).slice(0, 5) : [];
+          const next = Array.isArray(args.next) ? args.next.map(String).filter(Boolean).slice(0, 4) : [];
+          reviewCountRef.current += 1;
+          const count = reviewCountRef.current;
+          logActivity({
+            kind: "phase",
+            text: `Self-review #${count}: quality ${quality}/10${issues.length ? ` — ${issues.join("; ")}` : ""}`,
+          });
+          if (quality >= 8) {
+            return `Self-review recorded: quality ${quality}/10. Good enough to wrap up.${issues.length ? ` Keep in mind: ${issues.join("; ")}.` : ""} Write your final summary now: what you built, what you verified through the engine, and what you'd improve with more time.`;
+          }
+          if (count >= 4) {
+            return `Self-review #${count} recorded: quality ${quality}/10. The session's review budget is spent, so fix the single most important issue${issues.length ? ` (${issues[0]})` : ""}, test once more, then write your final honest summary — including what remains.`;
+          }
+          return `Self-review #${count} recorded: quality ${quality}/10 — this is NOT good enough to finish yet. Your own issues: ${issues.length ? issues.join("; ") : "(none listed)"}. Next up, in order: ${next.length ? next.join(" → ") : "fix the issues above"}. Continue working: address them, test again in the engine, then call self-review again. The user wants the real thing, not a demo.`;
+        },
+      },
     ];
-  }, [state, vault, memory, launch, onNavigate, onOpenFolder, onOpenNote, actions]);
+  }, [state, vault, memory, launch, onNavigate, onOpenFolder, onOpenNote, actions, logActivity]);
 
   /* MCP engines (Roblox Studio, Unreal Engine, …) — every tool a connected
      engine advertises becomes a real function the model can call. The run
@@ -1140,7 +1191,6 @@ export function AiProvider({
       const text = rawText.trim();
       if (!text || busy) return;
       const viaVoice = Boolean(opts?.voice);
-      const tone = detectTone(text);
       announce(viaVoice ? "*listening to you*" : "*receiving a new request*", "attentive");
 
       /* Slash commands — direct tool use. */
@@ -1150,8 +1200,8 @@ export function AiProvider({
         const remainder = slash[2].trim();
         const tool = tools.find((t) => t.name === toolName);
         push("user", text, toolName);
-        setEmotionFor("working");
-        announce(`*using /${toolName}*`, "working");
+        react({ kind: "task-start", task: "tool" });
+        announce(`*using /${toolName}*`);
         setBusy(true);
         try {
           if (!tool) {
@@ -1161,7 +1211,7 @@ export function AiProvider({
                 .map((t) => `- \`${t.usage}\` — ${t.description}`)
                 .join("\n")}`,
             );
-            setEmotionFor("concerned", 1800);
+            react({ kind: "task-fail" });
             return;
           }
           let args: Record<string, unknown> = {};
@@ -1175,12 +1225,12 @@ export function AiProvider({
           }
           const result = await tool.run(args);
           push("ai", result, toolName);
-          announce(`*finished /${toolName}*`, "happy");
-          setEmotionFor("happy", 1400);
+          announce(`*finished /${toolName}*`);
+          react({ kind: "task-success", importance: "minor" });
         } catch (e) {
           push("ai", `The tool errored: ${String((e as Error)?.message ?? e)}`);
-          announce(`* /${toolName} needs attention*`, "concerned");
-          setEmotionFor("concerned", 1800);
+          announce(`* /${toolName} needs attention*`);
+          react({ kind: "task-fail" });
         } finally {
           setBusy(false);
           if (viaVoice) {
@@ -1199,17 +1249,18 @@ export function AiProvider({
           "ai",
           `I'm not connected yet — ${PROVIDERS[cfg.provider]?.label ?? cfg.provider} needs an API key. Open **Settings → AI**, paste your key and test the connection.`,
         );
-        setEmotionFor("concerned", 2000);
+        react({ kind: "task-fail" });
         return;
       }
 
       push("user", text);
       const engineSession = engineTools.length > 0;
-      announce(engineSession ? "*starting an autonomous build session*" : "*thinking about what you asked*", engineSession ? "working" : "thinking");
+      announce(engineSession ? "*starting an autonomous build session*" : "*thinking about what you asked*");
       setBusy(true);
       setStopRequested(false);
       stopRef.current = false;
-      setEmotionFor(engineSession ? "working" : "thinking");
+      reviewCountRef.current = 0;
+      react({ kind: "task-start", task: engineSession ? "build" : "chat" });
       setActivity([]);
       setToolCount(0);
       setSessionStart(Date.now());
@@ -1255,7 +1306,7 @@ export function AiProvider({
           const timeout = window.setTimeout(() => controller.abort(), STEP_MS);
           let res: ChatResult;
           try {
-            res = await chatOnce(cfg, model, msgs, modelTools, controller.signal);
+            res = await chatOnce(cfg, model, msgs, modelTools, controller.signal, engineSession ? { temperature: 0.45, maxTokens: 4096 } : undefined);
           } finally {
             window.clearTimeout(timeout);
           }
@@ -1304,7 +1355,7 @@ export function AiProvider({
             };
             return { tc, label, isEngine, started, run };
           });
-          setEmotionFor("working");
+          react({ kind: "task-step", engine: engineSession });
           const settled = await Promise.all(runs.map((r) => r.run().then((out) => ({ r, out }))));
           for (const { r, out } of settled) {
             const ms = Date.now() - r.started;
@@ -1312,30 +1363,42 @@ export function AiProvider({
             toolsRun += 1;
             setToolCount((n) => n + 1);
             logActivity({ kind: "tool-end", text: r.label, engine: r.isEngine && r.label.includes(" · ") ? r.label.split(" · ")[0] : undefined, ok: !failed, detail: out.length > 240 ? `${out.slice(0, 240)}…` : out, ms });
+            react({ kind: "tool-result", ok: !failed, engine: r.isEngine, important: IMPORTANT_TOOL_RE.test(r.tc.function.name) });
             const clamped = clampToolResult(out);
             msgs.push(r.tc.id ? { role: "tool", tool_call_id: r.tc.id, content: clamped } : { role: "tool", content: clamped });
           }
+          /* Long sessions resend every accumulated tool result to the model on
+             every step, so context grows without bound and each step gets
+             slower. Old results keep their call IDs (the API requires them)
+             but are compressed in place to a small digest — the model keeps
+             reading recent results in full and only sees the gist of old ones. */
+          compressOldToolResults(msgs, 6);
         }
         if (stoppedEarly === "time") {
           finalText = `${finalText ? `${finalText.trim()}\n\n` : ""}I hit this session's work-time limit, so I stopped here — ask me to continue and I'll pick up where I left off.`;
-          announce("*session time limit — paused honestly*", "concerned");
+          announce("*session time limit — paused honestly*");
+          react({ kind: "task-fail" });
         } else if (stoppedEarly === "steps") {
           finalText = `${finalText ? `${finalText.trim()}\n\n` : ""}I reached this session's step budget and paused. Say "continue" and I'll keep building from here.`;
-          announce("*step budget reached — paused honestly*", "concerned");
+          announce("*step budget reached — paused honestly*");
+          react({ kind: "task-fail" });
         } else if (stoppedEarly === "stop") {
           finalText = `${finalText ? `${finalText.trim()}\n\n` : ""}Stopped, as you asked. Where I left off: ${toolsRun} tool call${toolsRun === 1 ? "" : "s"} done${finalText.trim() ? ` — ${finalText.trim()}` : ", before I wrote my summary."}`;
-          announce("*stopped — wrapping up*", "calm");
+          announce("*stopped — wrapping up*");
+          react({ kind: "stopped" });
         }
         if (!finalText.trim()) finalText = "I couldn't produce an answer.";
         push("ai", finalText.trim());
         logActivity({ kind: "reply", text: finalText.trim().slice(0, 220), detail: engineSession ? `${toolsRun} tool call${toolsRun === 1 ? "" : "s"} this session` : undefined });
-        announce(engineSession ? "*build session wrapped up*" : "*answer ready*", "happy");
-        setEmotionFor("happy", 1600);
+        announce(engineSession ? "*build session wrapped up*" : "*answer ready*");
+        react({ kind: "task-success", importance: engineSession ? (toolsRun >= 8 ? "major" : "normal") : "normal" });
         if (viaVoice) speak(finalText.trim());
 
         /* React to the user's tone after answering — typed messages show it
-           on the eyes; spoken replies are already animated by the voice. */
-        if (tone && !viaVoice) setEmotionFor(tone, 2600);
+           on the eyes; spoken replies are already animated by the voice. The
+           engine weighs the words against what just happened, so "YES!"
+           after a finished build is victory, not just excitement. */
+        if (!viaVoice) react({ kind: "user-said", text });
 
         /* Personal memory — when the user shares something personal, Nex
            quietly extracts durable facts and saves them. This runs in the
@@ -1349,12 +1412,13 @@ export function AiProvider({
                 if (entry) saved += 1;
               }
               if (saved > 0) {
-                announce(`*remembered ${saved} thing${saved === 1 ? "" : "s"} about you*`, "remembering");
+                announce(`*remembered ${saved} thing${saved === 1 ? "" : "s"} about you*`);
+                react({ kind: "memory-saved" });
                 /* Memory is capped: when it gets close to full, Nex manages it
                    by compressing to the essentials with the model. */
                 if (memory.usage > memory.max * MEMORY_COMPACT_AT) {
                   const comp = await compactMemory();
-                  announce(comp.ok ? "*memory nearly full — compressed to the essentials*" : "*memory is near its cap*", comp.ok ? "working" : "concerned");
+                  announce(comp.ok ? "*memory nearly full — compressed to the essentials*" : "*memory is near its cap*");
                 }
               }
             })
@@ -1370,7 +1434,8 @@ export function AiProvider({
         let reply: string;
         if (isStop) {
           reply = `Stopped, as you asked — ${toolsRun} tool call${toolsRun === 1 ? "" : "s"} had run${toolsRun > 0 ? "; the results so far are safe in the engine" : ""}. Say "continue" whenever you want me to pick the work back up.`;
-          announce("*stopped — wrapping up*", "calm");
+          announce("*stopped — wrapping up*");
+          react({ kind: "stopped" });
         } else if (isAbort) {
           reply = "The model took too long — try again, or pick a smaller/faster model in Settings → AI.";
         } else if (isConn) {
@@ -1382,31 +1447,36 @@ export function AiProvider({
           reply = `The AI request failed: ${err.message}. Check Settings → AI.`;
         }
         push("ai", reply);
-        announce("*the connection needs attention*", "concerned");
-        setEmotionFor("concerned", 2200);
+        announce("*the connection needs attention*");
+        react({ kind: "task-fail" });
         if (viaVoice) speak(reply);
       } finally {
         setBusy(false);
       }
     },
-    [announce, busy, compactMemory, memory, messages, push, setEmotionFor, tools, modelTools, engineTools, mcp, logActivity, stopSession],
+    [announce, busy, compactMemory, memory, messages, push, react, tools, modelTools, engineTools, mcp, logActivity, stopSession],
   );
 
   useNexVoice({
     enabled: voiceEnabled,
     callbacks: {
-      onWake: () => announce("*Nex is awake*", "wake"),
-      onListenStart: () => setEmotion("listening"),
+      onWake: () => {
+        announce("*Nex is awake*");
+        react({ kind: "voice-wake" });
+      },
+      onListenStart: () => react({ kind: "voice-listen", on: true }),
       onIdle: () => {
-        if (!busy) setEmotion("idle");
+        if (!busy) react({ kind: "voice-listen", on: false });
       },
       onCommand: (text) => {
-        announce("*listening closely*", "attentive");
+        announce("*listening closely*");
+        react({ kind: "voice-command" });
         void send(text, { voice: true });
       },
       onError: (message) => {
         setVoiceEnabled(false);
-        announce(`*voice needs attention: ${message}*`, "concerned");
+        announce(`*voice needs attention: ${message}*`);
+        react({ kind: "voice-error" });
       },
     },
   });
@@ -1414,6 +1484,33 @@ export function AiProvider({
   useEffect(() => {
     if (!voiceEnabled) stopSpeaking();
   }, [voiceEnabled]);
+
+  /* TTS broadcasts speaking state so the eyes animate while Nex talks — the
+     engine keeps it as a direct state and returns to the base afterwards. */
+  useEffect(() => {
+    const onSpeaking = (event: Event) => {
+      const active = Boolean((event as CustomEvent<{ active?: boolean }>).detail?.active);
+      react({ kind: "speaking", on: active });
+    };
+    window.addEventListener("qyn:nex-speaking", onSpeaking);
+    return () => window.removeEventListener("qyn:nex-speaking", onSpeaking);
+  }, [react]);
+
+  /* MCP engine connection changes — a real event Nex can feel: connecting is
+     attentive, a successful connection is a small happy beat, a failure is
+     concern. Background events are suppressed while a session is running. */
+  const prevMcpStatesRef = useRef<Record<string, string>>({});
+  useEffect(() => {
+    const prev = prevMcpStatesRef.current;
+    for (const server of mcp.servers) {
+      const before = prev[server.id];
+      if (before === undefined || before === server.state) continue;
+      prev[server.id] = server.state;
+      if (server.state === "connecting") react({ kind: "mcp-connecting" });
+      else if (server.state === "connected") react({ kind: "mcp-connected" });
+      else if (server.state === "error") react({ kind: "mcp-failed" });
+    }
+  }, [mcp.servers, react]);
 
   const clearChat = useCallback(() => {
     setMessages([]);
@@ -1451,8 +1548,8 @@ export function AiProvider({
   }, []);
 
   const setListening = useCallback((v: boolean) => {
-    setEmotion(v ? "listening" : "idle");
-  }, []);
+    react({ kind: "voice-listen", on: v });
+  }, [react]);
 
   const value = useMemo<AiValue>(
     () => ({
@@ -1478,8 +1575,11 @@ export function AiProvider({
       clearActivity,
       stopSession,
       stopRequested,
+      react,
+      emotionDebug,
+      intensity: emotionIntensity,
     }),
-    [messages, thoughts, busy, emotion, config, tools, send, clearChat, saveConfigCb, testConnection, compactMemory, setListening, setEmotionFor, announce, voiceEnabled, activity, sessionStart, toolCount, clearActivity, stopSession, stopRequested],
+    [messages, thoughts, busy, emotion, config, tools, send, clearChat, saveConfigCb, testConnection, compactMemory, setListening, setEmotionFor, announce, voiceEnabled, activity, sessionStart, toolCount, clearActivity, stopSession, stopRequested, react, emotionDebug, emotionIntensity],
   );
 
   return <AiContext.Provider value={value}>{children}</AiContext.Provider>;
