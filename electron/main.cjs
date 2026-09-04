@@ -178,40 +178,6 @@ ipcMain.handle("qyn:float-close", () => {
 });
 
 /* ------------------------------------------------------------------ */
-/* Start with Windows — a real per-user startup entry (HKCU Run)       */
-/* ------------------------------------------------------------------ */
-
-function autostartAvailable() {
-  return process.platform === "win32";
-}
-
-function autostartEnabled() {
-  try {
-    if (!autostartAvailable()) return false;
-    return app.getLoginItemSettings().openAtLogin === true;
-  } catch {
-    return false;
-  }
-}
-
-ipcMain.handle("qyn:autostart-get", () => ({
-  enabled: autostartEnabled(),
-  available: autostartAvailable(),
-}));
-
-ipcMain.handle("qyn:autostart-set", (_event, enabled) => {
-  if (!autostartAvailable()) {
-    return { ok: false, enabled: false, error: "Startup with Windows is only available on Windows." };
-  }
-  try {
-    app.setLoginItemSettings({ openAtLogin: Boolean(enabled), path: process.execPath });
-    return { ok: true, enabled: autostartEnabled() };
-  } catch (e) {
-    return { ok: false, enabled: autostartEnabled(), error: String((e && e.message) || e) };
-  }
-});
-
-/* ------------------------------------------------------------------ */
 /* State file                                                          */
 /* ------------------------------------------------------------------ */
 
@@ -713,7 +679,7 @@ function nexEntry(root, rel, name, entry, st) {
     rel,
     isDir: entry.isDirectory(),
     kind,
-    allowed: kind === "md" || kind === "image",
+    allowed: kind === "md" || kind === "text" || kind === "image",
     size: entry.isDirectory() ? 0 : st.size,
     mtimeMs: st.mtimeMs,
   };
@@ -781,7 +747,8 @@ ipcMain.handle("qyn:nex-folder-read", async (_event, rel, withData) => {
   const kind = nexKindOf(name);
   if (kind === "other") return { ok: false, error: "only .md, text/code and photo files can be read from the Nex folder" };
   try {
-    const st = await fsPromises.stat(full);
+    const st = await fsPromises.lstat(full);
+    if (st.isSymbolicLink()) return { ok: false, error: "links are not allowed inside the Nex folder" };
     if (!st.isFile()) return { ok: false, error: "not a file" };
     if (kind === "md" || kind === "text") {
       if (st.size > NEX_MD_LIMIT) return { ok: false, error: "that file is too large to read here" };
@@ -802,13 +769,19 @@ ipcMain.handle("qyn:nex-folder-read", async (_event, rel, withData) => {
 
 ipcMain.handle("qyn:nex-folder-write", async (_event, rel, content) => {
   if (typeof content !== "string") return { ok: false, error: "invalid content" };
-  if (content.length > NEX_MD_LIMIT) return { ok: false, error: "that .md file is too large to write" };
+  if (content.length > NEX_MD_LIMIT) return { ok: false, error: "that file is too large to write (max 500 KB)" };
   const resolved = await nexResolve(rel);
   if (resolved.error) return { ok: false, error: resolved.error };
   const kind = nexKindOf(path.basename(resolved.full));
   if (kind !== "md" && kind !== "text")
     return { ok: false, error: "Nex can only write .md and text/code files into the folder — photos are added by you." };
   try {
+    /* Never write through a symlink: a link with an allowed extension could
+       point outside the folder and break the boundary. lstat sees the link
+       itself, so a new file (ENOENT) still passes. */
+    const existing = await fsPromises.lstat(resolved.full).catch(() => null);
+    if (existing && existing.isSymbolicLink())
+      return { ok: false, error: "links are not allowed inside the Nex folder" };
     await nexEnsureRoot();
     await fsPromises.mkdir(path.dirname(resolved.full), { recursive: true });
     await fsPromises.writeFile(resolved.full, content, "utf8");
@@ -824,7 +797,8 @@ ipcMain.handle("qyn:nex-folder-delete", async (_event, rel) => {
   const kind = nexKindOf(path.basename(resolved.full));
   if (kind === "other") return { ok: false, error: "only .md, text/code and photo files in the Nex folder can be deleted" };
   try {
-    const st = await fsPromises.stat(resolved.full);
+    const st = await fsPromises.lstat(resolved.full);
+    if (st.isSymbolicLink()) return { ok: false, error: "links are not allowed inside the Nex folder" };
     if (st.isDirectory()) return { ok: false, error: "folders themselves are managed by you in Explorer — Nex can delete files inside them." };
     await fsPromises.rm(resolved.full);
     return { ok: true, rel: resolved.rel };

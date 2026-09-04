@@ -386,16 +386,49 @@ function compressOldToolResults(msgs: Array<Record<string, unknown>>, keep = 6):
 }
 
 /**
+ * Drop an unfinished tail from a saved agent conversation: an assistant
+ * message with tool_calls that was aborted mid-call (no tool results yet),
+ * plus any orphaned tool results that followed it. Resuming with those in
+ * history makes OpenAI-compatible APIs reject the request, so "continue"
+ * after a Stop must never carry them.
+ */
+function trimDanglingToolMessages(msgs: Array<Record<string, unknown>>): Array<Record<string, unknown>> {
+  while (msgs.length > 0) {
+    const last = msgs[msgs.length - 1];
+    const isOrphanTool = last.role === "tool";
+    const isOpenAssistant = last.role === "assistant" && Array.isArray(last.tool_calls) && last.tool_calls.length > 0;
+    if (isOrphanTool || isOpenAssistant) msgs.pop();
+    else break;
+  }
+  return msgs;
+}
+
+/**
  * True only when the tool itself reported failure. Searching the whole result
  * for the word "error" false-positives on scripts and scene data that merely
  * contain the word; MCP errors are JSON objects with an error field, or the
  * exact "MCP error" string the SDK throws.
  */
 function toolResultFailed(out: string): boolean {
-  const head = out.slice(0, 400);
-  if (/^\s*\{[\s\S]*\berror\b/i.test(head)) return true; // {"error": …} — first bytes
-  if (/^\s*\{[\s\S]*\"isError\"\s*:\s*true/i.test(head)) return true;
-  return /^MCP error/i.test(head) || /^Error:/i.test(head);
+  /* Only a *real* failure counts: a JSON object whose top-level error/isError
+     is set. The old regex matched any object containing the word "error"
+     anywhere (e.g. {"ok":true,"note":"no error"}), so successful engine
+     calls were often flagged as failed. Parse, don't pattern-match. */
+  if (/^\s*\{/.test(out)) {
+    for (const candidate of [out, out.slice(0, 400)]) {
+      try {
+        const obj = JSON.parse(candidate);
+        if (obj && typeof obj === "object") {
+          if (obj.isError === true) return true;
+          if (typeof obj.error === "string" && obj.error.length > 0) return true;
+        }
+        return false; // parsed cleanly and it is not an error
+      } catch {
+        // truncated/invalid — try the next candidate
+      }
+    }
+  }
+  return /^MCP error/i.test(out) || /^Error:/i.test(out);
 }
 
 /** Short human summary of a tool-call argument blob for the activity feed. */
@@ -1431,7 +1464,7 @@ export function AiProvider({
           react({ kind: "task-success", importance: "minor" });
         } catch (e) {
           push("ai", `The tool errored: ${String((e as Error)?.message ?? e)}`);
-          announce(`* /${toolName} needs attention*`);
+          announce(`*${toolName} needs attention*`);
           react({ kind: "task-fail" });
         } finally {
           setBusy(false);
@@ -1504,6 +1537,9 @@ export function AiProvider({
       const STEP_MS = 180_000;
       let stoppedEarly: "" | "time" | "steps" | "stop" = "";
       let toolsRun = 0;
+      /* The working conversation, kept so an aborted/stopped session can be
+         resumed ("continue"). Set inside try, read in catch on Stop. */
+      let msgsForResume: Array<Record<string, unknown>> | null = null;
 
       try {
         const model = await resolveModel(cfg);
@@ -1542,6 +1578,7 @@ export function AiProvider({
           msgsArr.splice(1, 0, { role: "user", content: digest });
         };
         upsertStateDigest(msgs);
+        msgsForResume = msgs;
 
         let finalText = "";
         for (let step = 0; step < MAX_STEPS; step++) {
@@ -1643,7 +1680,7 @@ export function AiProvider({
         /* A session that stopped early keeps its conversation so the next
            "continue" resumes it; a session that ran to completion is done. */
         if (stoppedEarly) {
-          resumeRef.current = msgs
+          resumeRef.current = trimDanglingToolMessages(msgsForResume ?? [])
             .filter((m) => !String(m.content ?? "").startsWith("__QYN_STATE__"))
             .slice(-44);
         } else {
@@ -1698,6 +1735,15 @@ export function AiProvider({
           reply = `Stopped, as you asked — ${toolsRun} tool call${toolsRun === 1 ? "" : "s"} had run${toolsRun > 0 ? "; the results so far are safe in the engine" : ""}. Say "continue" whenever you want me to pick the work back up.`;
           announce("*stopped — wrapping up*");
           react({ kind: "stopped" });
+          /* The model call aborted mid-turn, so the loop never reached the
+             resume block at the bottom — save the conversation here so
+             "continue" actually picks up the build. Dangling tool_calls
+             from the aborted step are trimmed. */
+          if (msgsForResume) {
+            resumeRef.current = trimDanglingToolMessages(msgsForResume)
+              .filter((m) => !String(m.content ?? "").startsWith("__QYN_STATE__"))
+              .slice(-44);
+          }
         } else if (isAbort) {
           reply = "The model took too long — try again, or pick a smaller/faster model in Settings → AI.";
         } else if (isConn) {
@@ -1777,6 +1823,13 @@ export function AiProvider({
   const clearChat = useCallback(() => {
     setMessages([]);
     setEmotionFor("idle");
+    /* Clearing the chat also forgets any paused build — otherwise typing
+       "continue" after a clear would resume an invisible old session. */
+    resumeRef.current = null;
+    goalRef.current = "";
+    planRef.current = "";
+    milestonesRef.current = [];
+    issuesRef.current = [];
   }, [setEmotionFor]);
 
   const clearActivity = useCallback(() => {

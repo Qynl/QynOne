@@ -1,8 +1,8 @@
-version: 0.2.2
+version: 0.2.3
 files:
-  - url: QynOne-Setup-0.2.2-x64.exe
-    sha512: rf/FZfMKqLu+lLLQE1eLox0ceEY3lsqTsCcuG1U1zQ30SI8WBahSe/Upo3rfXcEhMIIuy3axhuaYXLkxvj9KjQ==
-    size: 114479751
-path: QynOne-Setup-0.2.2-x64.exe
-sha512: rf/FZfMKqLu+lLLQE1eLox0ceEY3lsqTsCcuG1U1zQ30SI8WBahSe/Upo3rfXcEhMIIuy3axhuaYXLkxvj9KjQ==
-releaseDate: '2026-09-04T13:56:54.364Z'
+  - url: QynOne-Setup-0.2.3-x64.exe
+    sha512: btaQcIz6NTUCL/psTm0/i/VlzhPd4rh1yP1e/0HA8RLlsZqd6ewoaRC28RUv9S89xrGgsFtdZMG8h0Lz6IApyA==
+    size: 114479597
+path: QynOne-Setup-0.2.3-x64.exe
+sha512: btaQcIz6NTUCL/psTm0/i/VlzhPd4rh1yP1e/0HA8RLlsZqd6ewoaRC28RUv9S89xrGgsFtdZMG8h0Lz6IApyA==
+releaseDate: '2026-09-04T15:00:49.119Z'

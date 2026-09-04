@@ -1015,6 +1015,10 @@ export function useNexEmotions({ busy, voiceEnabled }: { busy: boolean; voiceEna
   useEffect(() => {
     if (busy || !prevBusyRef.current) return;
     const cur = currentRef.current;
+    /* Don't yank the eyes out of a live audio state right as a voice reply
+       starts — speaking/listening are driven by their own TTS/recognition
+       events and should end on their own. Only calm lingering *work* states. */
+    if (cur === "speaking" || cur === "listening") return;
     if (BASE_STATES.has(cur) && !CALM_BASE.has(cur)) {
       const t1 = setTimeout(() => {
         setState("calm");
