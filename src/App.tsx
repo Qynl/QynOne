@@ -25,6 +25,7 @@ import { NexPresence } from "./components/NexPresence";
 import { UiProvider } from "./components/ui";
 import { AiProvider } from "./lib/ai";
 import { isFloatMode } from "./lib/desktop";
+import { McpProvider } from "./lib/mcp";
 import { QynProvider, useQyn } from "./lib/store";
 import { ACCENTS, WALLPAPERS } from "./lib/theme";
 import type { ViewId } from "./lib/types";
@@ -141,49 +142,51 @@ function Shell() {
   };
 
   return (
-    <AiProvider onNavigate={(v) => navigate(v as ViewId)} onOpenFolder={openFolder} onOpenNote={openVaultNote}>
-      {/* Loading screen — the only pre-app screen. It unmounts the moment
-          the bar is full, so Home is simply there. */}
-      {phase === "boot" && <BootScreen />}
-      <div className="relative flex h-full flex-col overflow-hidden">
-        <Backdrop />
+    <McpProvider>
+      <AiProvider onNavigate={(v) => navigate(v as ViewId)} onOpenFolder={openFolder} onOpenNote={openVaultNote}>
+        {/* Loading screen — the only pre-app screen. It unmounts the moment
+            the bar is full, so Home is simply there. */}
+        {phase === "boot" && <BootScreen />}
+        <div className="relative flex h-full flex-col overflow-hidden">
+          <Backdrop />
 
-        <div className="relative z-10 flex h-full min-h-0 flex-col">
-          <TopBar onOpenPalette={() => setPaletteOpen(true)} onHome={() => navigate("home")} />
+          <div className="relative z-10 flex h-full min-h-0 flex-col">
+            <TopBar onOpenPalette={() => setPaletteOpen(true)} onHome={() => navigate("home")} />
 
-          {/* Views transition softly between each other */}
-          <AnimatePresence mode="wait" initial={false}>
-            <motion.div
-              key={`${view}-${view === "folders" ? (folderId ?? "all") : view === "vault" ? (vaultOpen ?? "none") : "view"}`}
-              exit={{ opacity: 0, y: -8 }}
-              transition={{ duration: 0.16, ease: [0.22, 1, 0.36, 1] }}
-              className="accent-scroll min-h-0 min-w-0 flex-1 overflow-y-auto"
-            >
-              {renderView()}
-            </motion.div>
+            {/* Views transition softly between each other */}
+            <AnimatePresence mode="wait" initial={false}>
+              <motion.div
+                key={`${view}-${view === "folders" ? (folderId ?? "all") : view === "vault" ? (vaultOpen ?? "none") : "view"}`}
+                exit={{ opacity: 0, y: -8 }}
+                transition={{ duration: 0.16, ease: [0.22, 1, 0.36, 1] }}
+                className="accent-scroll min-h-0 min-w-0 flex-1 overflow-y-auto"
+              >
+                {renderView()}
+              </motion.div>
+            </AnimatePresence>
+
+            {/* Nex remains visible as a layer above every routed view. */}
+            <NexPresence view={view} onOpen={() => navigate("ai")} />
+
+            {/* Bottom navigation — the whole nav lives here */}
+            <BottomDock view={view} onNavigate={navigate} />
+          </div>
+
+          {/* Search overlay */}
+          <AnimatePresence>
+            {paletteOpen && (
+              <CommandPalette
+                open={paletteOpen}
+                onClose={() => setPaletteOpen(false)}
+                onNavigate={navigate}
+                onOpenFolder={openFolder}
+                onOpenNote={openVaultNote}
+              />
+            )}
           </AnimatePresence>
-
-          {/* Nex remains visible as a layer above every routed view. */}
-          <NexPresence view={view} onOpen={() => navigate("ai")} />
-
-          {/* Bottom navigation — the whole nav lives here */}
-          <BottomDock view={view} onNavigate={navigate} />
         </div>
-
-        {/* Search overlay */}
-        <AnimatePresence>
-          {paletteOpen && (
-            <CommandPalette
-              open={paletteOpen}
-              onClose={() => setPaletteOpen(false)}
-              onNavigate={navigate}
-              onOpenFolder={openFolder}
-              onOpenNote={openVaultNote}
-            />
-          )}
-        </AnimatePresence>
-      </div>
-    </AiProvider>
+      </AiProvider>
+    </McpProvider>
   );
 }
 

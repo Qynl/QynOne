@@ -1,5 +1,7 @@
 node_modules/
 dist/
-release/
+release/*
+!release/latest.yml
+!release/*.blockmap
 *.tsbuildinfo
 .DS_Store

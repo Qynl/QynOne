@@ -1,21 +1,49 @@
 import { AnimatePresence, motion } from "framer-motion";
-import { ArrowRight, Bot, ChevronRight, Command, PictureInPicture2, Send, Sparkles, Wrench } from "lucide-react";
+import { Activity, ArrowRight, Bot, Cable, ChevronRight, Command, PictureInPicture2, Plug, Plus, Send, Sparkles, Wrench } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
+import { AgentActivity, AgentActivityMini } from "../components/AgentActivity";
 import { AiFace } from "../components/AiFace";
 import { useAi } from "../lib/ai";
 import { getDesktop, isDesktop } from "../lib/desktop";
+import type { McpServerStatus } from "../lib/desktop";
+import { useMcp } from "../lib/mcp";
 import { useMusic } from "../lib/music";
 import type { ViewId } from "../lib/types";
 import { cn } from "../lib/utils";
 
+const ENGINE_DOT: Record<McpServerStatus["state"], string> = {
+  idle: "bg-zinc-500",
+  connecting: "bg-amber-300 animate-pulse",
+  connected: "bg-emerald-400 shadow-[0_0_8px_rgba(52,211,153,0.8)]",
+  error: "bg-rose-400",
+};
+
 export function AiView({ onNavigate }: { onNavigate: (view: ViewId) => void }) {
-  const { messages, busy, emotion, tools, send, clearChat } = useAi();
+  const { messages, busy, emotion, tools, send, clearChat, activity } = useAi();
+  const mcp = useMcp();
   const music = useMusic();
   const [draft, setDraft] = useState("");
   const [floating, setFloating] = useState(false);
+  const [tab, setTab] = useState<"chat" | "activity">("chat");
   const inputRef = useRef<HTMLInputElement>(null);
   const endRef = useRef<HTMLDivElement>(null);
   const showTools = draft.startsWith("/");
+
+  /* When a session kicks off, peek once at the live trace so the user
+     notices there's something to watch. If they go back to chat, never
+     yank them again during the same session — the pulsing dot in the
+     header keeps the door visible. */
+  const autoSwitchedRef = useRef(false);
+  useEffect(() => {
+    if (!busy) {
+      autoSwitchedRef.current = false;
+      return;
+    }
+    if (autoSwitchedRef.current || activity.length === 0) return;
+    autoSwitchedRef.current = true;
+    const t = window.setTimeout(() => setTab((current) => (current === "chat" ? "activity" : current)), 900);
+    return () => window.clearTimeout(t);
+  }, [busy, activity.length]);
 
   /* Floating Nex: an always-on-top companion window with just the eyes,
      so Nex stays visible while you play or work in other apps. */
@@ -53,6 +81,10 @@ export function AiView({ onNavigate }: { onNavigate: (view: ViewId) => void }) {
     void send(text);
   };
 
+  if (tab === "activity") {
+    return <AgentActivity onBack={() => setTab("chat")} />;
+  }
+
   return (
     <div className="mx-auto flex h-full min-h-0 w-full max-w-[1060px] flex-col px-5 py-5 md:px-8">
       <div className="flex items-start justify-between gap-4">
@@ -64,6 +96,14 @@ export function AiView({ onNavigate }: { onNavigate: (view: ViewId) => void }) {
           </p>
         </div>
         <div className="hidden items-center gap-2 md:flex">
+          <button
+            onClick={() => setTab("activity")}
+            className="glass-soft flex h-8 items-center gap-2 rounded-lg px-3 text-[11.5px] font-medium text-frost-300 transition hover:border-accent-soft hover:text-frost-100"
+            title="Open the live agent trace — thoughts, tool calls and engine actions"
+          >
+            <Activity size={13} className="text-accent" /> Agent Activity
+            {busy && activity.length > 0 && <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-accent shadow-[0_0_8px_var(--accent-glow)]" />}
+          </button>
           <button onClick={() => onNavigate("vault")} className="glass-soft flex h-8 items-center gap-2 rounded-lg px-3 text-[11.5px] font-medium text-frost-300 transition hover:text-frost-100">
             <Command size={13} className="text-accent" /> Open Vault <ArrowRight size={12} />
           </button>
@@ -94,7 +134,13 @@ export function AiView({ onNavigate }: { onNavigate: (view: ViewId) => void }) {
             <div className="grid h-8 w-8 place-items-center rounded-xl bg-accent-soft text-accent"><Bot size={16} /></div>
             <div className="min-w-0 flex-1">
               <p className="text-[12.5px] font-semibold text-frost-100">Nex</p>
-              <p className="text-[10.5px] text-frost-500">{busy ? "Working across QynOne…" : "Ready when you are"}</p>
+              <p className="text-[10.5px] text-frost-500">
+                {busy && mcp.servers.some((s) => s.state === "connected")
+                  ? `Building with ${mcp.servers.filter((s) => s.state === "connected").map((s) => s.name).join(" + ")}…`
+                  : busy
+                    ? "Working across QynOne…"
+                    : "Ready when you are"}
+              </p>
             </div>
             <AiFace emotion={busy ? emotion : "idle"} size={72} headphones={Boolean(music)} dance={Boolean(music)} />
           </div>
@@ -158,7 +204,54 @@ export function AiView({ onNavigate }: { onNavigate: (view: ViewId) => void }) {
           </div>
         </section>
 
-        <aside className="flex w-[230px] min-h-0 shrink-0 flex-col gap-3">
+        <aside className="flex w-[232px] min-h-0 shrink-0 flex-col gap-3">
+          {/* Engine connections — Roblox Studio, Unreal Engine via MCP */}
+          <div className="glass shrink-0 rounded-2xl p-3.5">
+            <div className="flex items-center justify-between gap-2">
+              <div className="flex items-center gap-2"><Cable size={13} className="text-accent" /><p className="text-[11.5px] font-semibold text-frost-200">Engines</p></div>
+              {mcp.supported && mcp.servers.length === 0 && (
+                <button onClick={() => onNavigate("settings")} className="grid h-5 w-5 place-items-center rounded-md bg-white/5 text-frost-400 transition hover:bg-accent-soft hover:text-frost-100" title="Add an engine"><Plus size={11} /></button>
+              )}
+            </div>
+            {!mcp.supported ? (
+              <p className="mt-2 text-[10.5px] leading-relaxed text-frost-500">MCP connections live in the QynOne desktop app — this preview can't reach your PC's engines.</p>
+            ) : mcp.servers.length === 0 ? (
+              <button onClick={() => onNavigate("settings")} className="mt-2 w-full rounded-lg border border-dashed border-white/12 px-2.5 py-2 text-left text-[10.5px] leading-relaxed text-frost-500 transition hover:border-accent-soft hover:text-frost-300">
+                No engines yet. Connect Roblox Studio or Unreal Engine so Nex can read and write real scripts.
+              </button>
+            ) : (
+              <div className="mt-2 space-y-1">
+                {mcp.servers.map((server) => {
+                  const busyConnecting = mcp.connectingIds.includes(server.id) || server.state === "connecting";
+                  return (
+                    <div key={server.id} onClick={() => onNavigate("settings")} className="group flex cursor-pointer items-center gap-2 rounded-lg px-2 py-1.5 transition hover:bg-white/[0.045]" title="Manage engine connections in Settings">
+                      <span className={cn("h-1.5 w-1.5 shrink-0 rounded-full", ENGINE_DOT[server.state])} />
+                      <span className="min-w-0 flex-1">
+                        <span className="block truncate text-[11.5px] font-medium text-frost-200">{server.name}</span>
+                        <span className="block truncate text-[9.5px] text-frost-500">
+                          {server.state === "connected" ? `${server.tools.length} tools ready` : server.state === "error" ? "offline — click to retry" : busyConnecting ? "connecting…" : server.state === "idle" ? "not connected" : ""}
+                        </span>
+                      </span>
+                      {server.state === "connected" ? (
+                        <span className="grid h-5 w-5 shrink-0 place-items-center rounded-md text-frost-600 transition group-hover:bg-accent-soft group-hover:text-frost-200"><ChevronRight size={11} /></span>
+                      ) : busyConnecting ? (
+                        <span className="h-3 w-3 shrink-0 animate-spin rounded-full border-[1.5px] border-white/15 border-t-white/70" />
+                      ) : (
+                        <button
+                          onClick={(e) => { e.stopPropagation(); void mcp.connect(server.id); }}
+                          title="Try connecting now"
+                          className="grid h-5 w-5 shrink-0 place-items-center rounded-md bg-white/5 text-frost-400 transition hover:bg-accent-soft hover:text-frost-100"
+                        >
+                          <Plug size={11} />
+                        </button>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+          </div>
+
           <div className="glass flex min-h-0 flex-1 flex-col rounded-2xl p-4">
             <div className="flex items-center gap-2"><Wrench size={14} className="text-accent" /><p className="text-[12px] font-semibold text-frost-200">What Nex can use</p></div>
             <p className="mt-2 text-[11.5px] leading-relaxed text-frost-500">Nex only acts through these explicit QynOne tools. Type <span className="text-frost-300">/</span> in chat to call one directly.</p>
@@ -168,13 +261,21 @@ export function AiView({ onNavigate }: { onNavigate: (view: ViewId) => void }) {
                   <span className="truncate font-mono text-[10.5px] text-frost-400">/{tool.name}</span>
                 </button>
               ))}
+              {mcp.tools.length > 0 && (
+                <div className="space-y-1.5 pt-1">
+                  <p className="px-2 pb-0.5 text-[9px] font-semibold uppercase tracking-[0.18em] text-frost-600">Engine tools · {mcp.tools.length}</p>
+                  {mcp.tools.slice(0, 24).map((tool) => (
+                    <div key={`${tool.serverId}-${tool.name}`} title={tool.description} className="flex w-full items-center gap-2 rounded-lg px-2.5 py-1">
+                      <span className="min-w-0 truncate font-mono text-[10px] text-accent/90">{tool.name}</span>
+                    </div>
+                  ))}
+                  {mcp.tools.length > 24 && <p className="px-2 text-[9.5px] text-frost-600">+{mcp.tools.length - 24} more in the engine</p>}
+                </div>
+              )}
             </div>
           </div>
-          <button onClick={() => onNavigate("vault")} className="glass-soft w-full rounded-2xl p-4 text-left transition hover:border-accent-soft hover:bg-white/[0.045]">
-            <p className="text-[10px] font-semibold uppercase tracking-[0.18em] text-accent">Knowledge</p>
-            <p className="mt-1 text-[13px] font-semibold text-frost-200">Open your Markdown Vault</p>
-            <p className="mt-1 text-[11.5px] leading-relaxed text-frost-500">Nex can search, create and open real notes — and manages its own memory in the vault.</p>
-          </button>
+          {/* Live activity — one click to the full trace */}
+          <AgentActivityMini onOpen={() => setTab("activity")} />
         </aside>
       </div>
     </div>

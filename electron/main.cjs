@@ -20,6 +20,7 @@ const os = require("node:os");
 const fsPromises = require("node:fs/promises");
 const path = require("node:path");
 const { fileURLToPath } = require("node:url");
+const { createMcpRuntime } = require("./mcpClient.cjs");
 
 const IS_DEV = Boolean(process.env.VITE_DEV_SERVER_URL);
 
@@ -554,6 +555,7 @@ function startVaultWatcher() {
 app.whenReady().then(() => {
   createWindow();
   startVaultWatcher();
+  initMcp();
   app.on("activate", () => {
     if (BrowserWindow.getAllWindows().length === 0) createWindow();
   });
@@ -783,9 +785,205 @@ ipcMain.handle("qyn:autostart-set", (_event, enabled) => {
 });
 
 /* ------------------------------------------------------------------ */
+/* MCP connections — Roblox Studio, Unreal Engine and any MCP server.  */
+/* Nex drives real engines through the same tool loop as QynOne tools. */
+/* Each server config is a small stdio or HTTP client (mcpClient.cjs). */
+/* ------------------------------------------------------------------ */
+
+function mcpConfigFile() {
+  return path.join(app.getPath("userData"), "qynone-mcp.json");
+}
+
+async function loadMcpConfigs() {
+  try {
+    const raw = await fsPromises.readFile(mcpConfigFile(), "utf8");
+    const parsed = JSON.parse(raw);
+    if (Array.isArray(parsed)) {
+      return parsed.filter((c) => c && typeof c === "object" && c.id && c.name && (c.transport === "stdio" || c.transport === "http"));
+    }
+  } catch {
+    // no file yet — first run
+  }
+  return [];
+}
+
+async function saveMcpConfigs(configs) {
+  const file = mcpConfigFile();
+  await fsPromises.mkdir(path.dirname(file), { recursive: true });
+  await fsPromises.writeFile(file, JSON.stringify(configs, null, 2), "utf8");
+}
+
+/* id -> runtime (mcpClient). A runtime only exists once a connection has
+   been attempted; configs without a runtime read as state "idle". */
+const mcpRuntimes = new Map();
+let mcpConfigsCache = [];
+
+function mcpConfig(id) {
+  return mcpConfigsCache.find((c) => c.id === id) || null;
+}
+
+function mcpStatus(config) {
+  const runtime = mcpRuntimes.get(config.id);
+  if (runtime) return runtime.snapshot();
+  return {
+    id: config.id,
+    name: config.name,
+    transport: config.transport,
+    command: config.command || "",
+    args: config.args || [],
+    url: config.url || "",
+    env: config.env || {},
+    autoConnect: config.autoConnect !== false,
+    state: "idle",
+    error: "",
+    log: [],
+    tools: [],
+  };
+}
+
+function mcpStatuses() {
+  return mcpConfigsCache.map(mcpStatus);
+}
+
+function mcpBroadcast() {
+  const list = mcpStatuses();
+  for (const win of BrowserWindow.getAllWindows()) {
+    win.webContents.send("qyn:mcp-changed", list);
+  }
+}
+
+function mcpEnsureRuntime(config) {
+  let runtime = mcpRuntimes.get(config.id);
+  if (!runtime || runtime.state === "error") {
+    if (runtime) {
+      runtime.stop().catch(() => {});
+      mcpRuntimes.delete(config.id);
+    }
+    runtime = createMcpRuntime(config);
+    mcpRuntimes.set(config.id, runtime);
+  }
+  return runtime;
+}
+
+async function mcpConnect(id) {
+  const config = mcpConfig(id);
+  if (!config) return { ok: false, error: "Unknown connection." };
+  const runtime = mcpEnsureRuntime(config);
+  try {
+    await runtime.start();
+    return { ok: true, status: runtime.snapshot() };
+  } catch (e) {
+    return { ok: false, error: String((e && e.message) || e), status: runtime.snapshot() };
+  } finally {
+    mcpBroadcast();
+  }
+}
+
+async function mcpDisconnect(id) {
+  const runtime = mcpRuntimes.get(id);
+  if (runtime) {
+    await runtime.stop().catch(() => {});
+    mcpRuntimes.delete(id);
+  }
+  mcpBroadcast();
+  return { ok: true };
+}
+
+function isConnectionFailure(message) {
+  return /Could not reach|ECONNREFUSED|fetch failed|process ended|signal|exit [0-9]|Timed out waiting for initialize/i.test(message || "");
+}
+
+async function mcpCall(id, toolName, args) {
+  const config = mcpConfig(id);
+  if (!config) return { ok: false, error: "Unknown connection." };
+  const runtime = mcpEnsureRuntime(config);
+  let stateChanged = false;
+  try {
+    if (runtime.state !== "connected") {
+      await runtime.start();
+      stateChanged = true;
+    }
+    const result = await runtime.callTool(String(toolName), args && typeof args === "object" ? args : {});
+    if (stateChanged) mcpBroadcast();
+    return { ok: true, result };
+  } catch (e) {
+    const message = String((e && e.message) || e);
+    if (isConnectionFailure(message) && mcpRuntimes.get(id)) {
+      mcpRuntimes.delete(id); // next attempt restarts cleanly
+      runtime.stop().catch(() => {});
+    }
+    mcpBroadcast();
+    return { ok: false, error: message };
+  }
+}
+
+ipcMain.handle("qyn:mcp-list", async () => mcpStatuses());
+
+ipcMain.handle("qyn:mcp-save", async (_event, raw) => {
+  const c = raw && typeof raw === "object" ? raw : {};
+  const id = typeof c.id === "string" && c.id ? c.id : `mcp_${Date.now().toString(36)}`;
+  const transport = c.transport === "http" ? "http" : "stdio";
+  const name = String(c.name || "").trim().slice(0, 40) || "MCP server";
+  const config = {
+    id,
+    name,
+    transport,
+    command: transport === "http" ? "" : String(c.command || "").trim().slice(0, 500),
+    args: transport === "http" ? [] : Array.isArray(c.args) ? c.args.map((a) => String(a).slice(0, 400)) : [],
+    url: transport === "http" ? String(c.url || "").trim().slice(0, 500) : "",
+    env: c.env && typeof c.env === "object" ? c.env : {},
+    autoConnect: c.autoConnect !== false,
+  };
+  if (transport === "stdio" && !config.command) return { ok: false, error: "A stdio connection needs a launch command." };
+  if (transport === "http" && !/^https?:\/\//i.test(config.url)) return { ok: false, error: "An HTTP connection needs a URL like http://127.0.0.1:8000/mcp." };
+  const existing = mcpConfigsCache.find((x) => x.id === id);
+  mcpConfigsCache = [...mcpConfigsCache.filter((x) => x.id !== id), config];
+  if (existing) {
+    // restart with the new settings if it was running
+    await mcpDisconnect(id);
+    if (config.autoConnect) void mcpConnect(id);
+  }
+  await saveMcpConfigs(mcpConfigsCache).catch(() => {});
+  mcpBroadcast();
+  return { ok: true, id, status: mcpStatus(config) };
+});
+
+ipcMain.handle("qyn:mcp-remove", async (_event, id) => {
+  const removed = mcpConfigsCache.some((c) => c.id === id);
+  if (!removed) return { ok: false, error: "Unknown connection." };
+  await mcpDisconnect(id);
+  mcpConfigsCache = mcpConfigsCache.filter((c) => c.id !== id);
+  await saveMcpConfigs(mcpConfigsCache).catch(() => {});
+  mcpBroadcast();
+  return { ok: true };
+});
+
+ipcMain.handle("qyn:mcp-connect", (_event, id) => mcpConnect(String(id)));
+
+ipcMain.handle("qyn:mcp-disconnect", (_event, id) => mcpDisconnect(String(id)));
+
+ipcMain.handle("qyn:mcp-call", (_event, id, toolName, args) => mcpCall(String(id), toolName, args));
+
+async function initMcp() {
+  mcpConfigsCache = await loadMcpConfigs();
+  mcpBroadcast();
+}
+
+function shutdownMcp() {
+  for (const runtime of mcpRuntimes.values()) {
+    runtime.stop().catch(() => {});
+  }
+  mcpRuntimes.clear();
+}
+
+/* ------------------------------------------------------------------ */
 /* App lifecycle                                                       */
 /* ------------------------------------------------------------------ */
 
 app.on("window-all-closed", () => {
   if (process.platform !== "darwin") app.quit();
+});
+
+app.on("will-quit", () => {
+  shutdownMcp();
 });

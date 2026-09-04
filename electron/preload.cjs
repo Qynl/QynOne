@@ -67,4 +67,18 @@ contextBridge.exposeInMainWorld("qynDesktop", {
     ipcRenderer.on("qyn:float-changed", listener);
     return () => ipcRenderer.removeListener("qyn:float-changed", listener);
   },
+
+  /* MCP — live connections to Roblox Studio, Unreal Engine, etc. */
+  mcpList: () => ipcRenderer.invoke("qyn:mcp-list"),
+  mcpSave: (cfg) => ipcRenderer.invoke("qyn:mcp-save", cfg),
+  mcpRemove: (id) => ipcRenderer.invoke("qyn:mcp-remove", id),
+  mcpConnect: (id) => ipcRenderer.invoke("qyn:mcp-connect", id),
+  mcpDisconnect: (id) => ipcRenderer.invoke("qyn:mcp-disconnect", id),
+  mcpCall: (id, tool, args) => ipcRenderer.invoke("qyn:mcp-call", id, tool, args),
+  /* Main pushes the full server list on any connect/disconnect/state change. */
+  mcpOnChanged: (cb) => {
+    const listener = (_event, servers) => cb(servers);
+    ipcRenderer.on("qyn:mcp-changed", listener);
+    return () => ipcRenderer.removeListener("qyn:mcp-changed", listener);
+  },
 });

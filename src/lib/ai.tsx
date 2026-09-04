@@ -2,6 +2,7 @@ import { createContext, useCallback, useContext, useEffect, useMemo, useRef, use
 import type { ReactNode } from "react";
 import { getDesktop, isFloatMode } from "./desktop";
 import type { AiConfig } from "./desktop";
+import { mcpFunctionName, useMcp } from "./mcp";
 import { clearNowPlaying, playOnAmazonMusic, setNowPlaying } from "./music";
 import systemPromptMd from "../system-prompt.md?raw";
 import { useQyn } from "./store";
@@ -106,6 +107,22 @@ export interface NexThought {
   ts: number;
 }
 
+/** A live trace of what Nex is doing: thoughts, tool calls, results, phases. */
+export interface AgentEvent {
+  id: string;
+  ts: number;
+  kind: "thought" | "tool-start" | "tool-end" | "phase" | "reply";
+  /** thought text, tool name, phase label or reply excerpt */
+  text: string;
+  /** for tool events: which connection (e.g. "Roblox Studio") the tool belongs to */
+  engine?: string;
+  /** for tool-end: ok / error, plus a short result excerpt */
+  ok?: boolean;
+  detail?: string;
+  /** wall-clock ms the tool took (tool-end only) */
+  ms?: number;
+}
+
 export interface AiToolDef {
   name: string;
   usage: string;
@@ -185,12 +202,16 @@ function resolvedEndpoint(cfg: AiConfig): string {
 /* Only the ephemeral runtime context is appended here.                 */
 /* ------------------------------------------------------------------ */
 
-function buildSystemPrompt(memorySummary: string): string {
+function buildSystemPrompt(memorySummary: string, engines: string[] = []): string {
   const now = new Date();
   const memoryBlock = memorySummary
     ? `What you remember about this user (long-term memory, stored in ${MEMORY_PATH}):\n${memorySummary}\nUse this to be personal — greet them, reference their projects and preferences. When they correct or update something you remembered, save the correction with the remember tool.`
     : "You have no long-term memory of this user yet. When they tell you something personal (a name, a favorite, a preference, an ongoing project), use the remember tool to save it.";
-  return `${systemPromptMd.trim()}\n\n---\n\n## Runtime context (refreshed on every request)\n\n- Today: ${now.toLocaleDateString(undefined, { weekday: "long", year: "numeric", month: "long", day: "numeric" })}. Current time: ${now.toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit" })}.\n- Vault budget: max ${VAULT_MAX_NOTES} notes, ${(NOTE_MAX_CHARS / 1000).toFixed(0)} KB per note. Memory file: ${MEMORY_PATH} (capped at ${(MEMORY_MAX_CHARS / 1000).toFixed(1)} KB).\n- ${memoryBlock}`;
+  const engineBlock =
+    engines.length > 0
+      ? `\n- Autonomous build mode is active (connected: ${engines.join(", ")}). When the user gives you a development goal, treat it as a project you own: plan, build, test through the engine's own tools, inspect what you made, critically evaluate it, then improve and test again — without waiting for permission between steps. You have a generous step budget this session; use it. Multiple tool calls in one step run in parallel, so batch independent reads and edits together. Narrate your plan and reasoning in your reply text between tool steps — the user watches a live Agent Activity trace of your thoughts, tool calls and results. Only pause to ask when a decision genuinely cannot be inferred or would substantially change the result. Never stop at "a basic version works" when the request implies more; finish with what you completed, what you verified, and what you would improve next.`
+      : "";
+  return `${systemPromptMd.trim()}\n\n---\n\n## Runtime context (refreshed on every request)\n\n- Today: ${now.toLocaleDateString(undefined, { weekday: "long", year: "numeric", month: "long", day: "numeric" })}. Current time: ${now.toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit" })}.\n- Vault budget: max ${VAULT_MAX_NOTES} notes, ${(NOTE_MAX_CHARS / 1000).toFixed(0)} KB per note. Memory file: ${MEMORY_PATH} (capped at ${(MEMORY_MAX_CHARS / 1000).toFixed(1)} KB).\n- Connected MCP engines right now: ${engines.length > 0 ? engines.join(", ") : "none — if the user asks for engine work (Roblox, Unreal, …), say you need the QynOne desktop app and the engine running with its MCP server enabled (Settings → Connections)."}${engineBlock}\n- ${memoryBlock}`;
 }
 
 /* ------------------------------------------------------------------ */
@@ -330,6 +351,24 @@ async function extractMemoryFacts(cfg: AiConfig, model: string, userText: string
 }
 
 /* ------------------------------------------------------------------ */
+/* Activity helpers                                                    */
+/* ------------------------------------------------------------------ */
+
+/** Short human summary of a tool-call argument blob for the activity feed. */
+function summarizeArgs(rawArgs: string): string {
+  try {
+    const parsed = JSON.parse(rawArgs || "{}") as Record<string, unknown>;
+    const parts = Object.entries(parsed)
+      .slice(0, 3)
+      .map(([k, v]) => `${k}: ${String(v).slice(0, 60)}`);
+    const joined = parts.join(" · ");
+    return joined.length > 120 ? `${joined.slice(0, 120)}…` : joined;
+  } catch {
+    return "";
+  }
+}
+
+/* ------------------------------------------------------------------ */
 /* Context                                                             */
 /* ------------------------------------------------------------------ */
 
@@ -356,6 +395,13 @@ interface AiValue {
   compactMemory: () => Promise<{ ok: boolean; message: string }>;
   voiceEnabled: boolean;
   setVoiceEnabled: (enabled: boolean) => void;
+  /** Live agent trace: thoughts, tool calls, results, phases — newest last. */
+  activity: AgentEvent[];
+  /** When the current (or last) agent session started; null before any run. */
+  sessionStart: number | null;
+  /** How many tool calls completed in the current (or last) session. */
+  toolCount: number;
+  clearActivity: () => void;
 }
 
 const AiContext = createContext<AiValue | null>(null);
@@ -374,6 +420,7 @@ export function AiProvider({
   const { state, actions } = useQyn();
   const vault = useVault();
   const memory = useMemory();
+  const mcp = useMcp();
   const launch = useLaunch();
   const stats = useStats();
   const sys = useSystemInfo();
@@ -387,6 +434,11 @@ export function AiProvider({
   const [thoughts, setThoughts] = useState<NexThought[]>([
     { id: uid(), text: "*watching QynOne*", ts: Date.now() },
   ]);
+  /* Live agent activity — every thought, tool call and result lands here so
+     the Agent Activity tab can replay the session as it happens. */
+  const [activity, setActivity] = useState<AgentEvent[]>([]);
+  const [sessionStart, setSessionStart] = useState<number | null>(null);
+  const [toolCount, setToolCount] = useState(0);
   const [busy, setBusy] = useState(false);
   const [voiceEnabled, setVoiceEnabled] = useState(false);
   const [emotion, setEmotion] = useState<AiEmotion>("idle");
@@ -452,9 +504,14 @@ export function AiProvider({
     const text = rawText.trim();
     if (!text) return;
     setThoughts((current) => [...current, { id: uid(), text, ts: Date.now() }].slice(-24));
+    setActivity((a) => [...a, { id: uid(), ts: Date.now(), kind: "thought" as const, text: text.replace(/^\*|\*$/g, "") }].slice(-400));
     if (nextEmotion) setEmotionFor(nextEmotion, 1800);
     if (speakIt) speak(text.replace(/^\*|\*$/g, ""));
   }, [setEmotionFor]);
+
+  const logActivity = useCallback((event: Omit<AgentEvent, "id" | "ts">) => {
+    setActivity((a) => [...a, { ...event, id: uid(), ts: Date.now() }].slice(-400));
+  }, []);
 
   const push = useCallback((role: "user" | "ai", text: string, tool?: string) => {
     setMessages((m) => [...m, { id: uid(), role, text, tool, ts: Date.now() }]);
@@ -1008,6 +1065,26 @@ export function AiProvider({
     ];
   }, [state, vault, memory, launch, onNavigate, onOpenFolder, onOpenNote, actions]);
 
+  /* MCP engines (Roblox Studio, Unreal Engine, …) — every tool a connected
+     engine advertises becomes a real function the model can call. The run
+     handler forwards to the engine through the Electron main process. */
+  const engineTools = useMemo<AiToolDef[]>(() => {
+    return mcp.tools.map((t) => ({
+      name: mcpFunctionName(t.serverSlug, t.name),
+      usage: `${t.serverName} · ${t.name}`,
+      description: `[${t.serverName}] ${t.description || t.name}`,
+      parameters: t.parameters,
+      run: async (args) => {
+        const res = await mcp.call(t.serverId, t.name, args);
+        if (!res.ok) throw new Error(res.error || `${t.name} failed`);
+        return res.result ?? "done";
+      },
+    }));
+  }, [mcp]);
+
+  /* What the model may call this turn: engine tools + QynOne tools. */
+  const modelTools = useMemo<AiToolDef[]>(() => [...engineTools, ...tools], [engineTools, tools]);
+
   /* ------------------------------------------------------------------ */
   /* Send                                                               */
   /* ------------------------------------------------------------------ */
@@ -1081,11 +1158,26 @@ export function AiProvider({
       }
 
       push("user", text);
-      announce("*thinking about what you asked*", "thinking");
+      const engineSession = engineTools.length > 0;
+      announce(engineSession ? "*starting an autonomous build session*" : "*thinking about what you asked*", engineSession ? "working" : "thinking");
       setBusy(true);
-      setEmotionFor("thinking");
-      const controller = new AbortController();
-      const timeout = window.setTimeout(() => controller.abort(), 120_000);
+      setEmotionFor(engineSession ? "working" : "thinking");
+      setActivity([]);
+      setToolCount(0);
+      setSessionStart(Date.now());
+      const connectedEngines = mcp.servers.filter((s) => s.state === "connected").map((s) => s.name);
+      if (engineSession) {
+        logActivity({ kind: "phase", text: `Session started — ${connectedEngines.length} engine${connectedEngines.length === 1 ? "" : "s"} connected (${connectedEngines.join(", ") || "none"}), autonomous mode on` });
+      }
+      /* Engine builds run long: a generous per-model-call timeout and a big
+         step budget (each tool result feeds the next decision), guarded by
+         an overall session cap so Nex always comes back with a report. */
+      const sessionStart = Date.now();
+      const MAX_STEPS = engineSession ? 60 : 8;
+      const SESSION_MS = 25 * 60_000;
+      const STEP_MS = 180_000;
+      let stoppedEarly: "" | "time" | "steps" = "";
+      let toolsRun = 0;
 
       try {
         const model = await resolveModel(cfg);
@@ -1093,19 +1185,35 @@ export function AiProvider({
           .filter((m) => m.role === "user" || m.role === "ai")
           .slice(-12)
           .map((m) => ({ role: m.role, content: m.text }));
+        const engines = mcp.servers.filter((s) => s.state === "connected").map((s) => s.name);
         const msgs: Array<Record<string, unknown>> = [
-          { role: "system", content: buildSystemPrompt(memory.summary) },
+          { role: "system", content: buildSystemPrompt(memory.summary, engines) },
           ...history,
           { role: "user", content: text },
         ];
 
         let finalText = "";
-        for (let step = 0; step < 6; step++) {
-          const res = await chatOnce(cfg, model, msgs, tools, controller.signal);
+        for (let step = 0; step < MAX_STEPS; step++) {
+          if (Date.now() - sessionStart > SESSION_MS) {
+            stoppedEarly = "time";
+            break;
+          }
+          const controller = new AbortController();
+          const timeout = window.setTimeout(() => controller.abort(), STEP_MS);
+          let res: ChatResult;
+          try {
+            res = await chatOnce(cfg, model, msgs, modelTools, controller.signal);
+          } finally {
+            window.clearTimeout(timeout);
+          }
+          if (res.content.trim()) {
+            logActivity({ kind: "thought", text: res.content.trim().slice(0, 220) });
+          }
           if (!res.toolCalls || res.toolCalls.length === 0) {
             finalText = res.content;
             break;
           }
+          if (step === MAX_STEPS - 1) stoppedEarly = "steps";
           msgs.push({
             role: "assistant",
             content: res.content || null,
@@ -1115,29 +1223,56 @@ export function AiProvider({
               function: { name: tc.function.name, arguments: tc.function.arguments },
             })),
           });
-          for (const tc of res.toolCalls) {
-            const tool = tools.find((t) => t.name === tc.function.name);
-            let result: string;
-            announce(`*using /${tc.function.name}*`, "working");
-            setEmotionFor("working");
-            try {
-              const args = (() => {
-                try {
-                  return JSON.parse(tc.function.arguments ?? "{}") as Record<string, unknown>;
-                } catch {
-                  return {};
-                }
-              })();
-              result = tool ? await tool.run(args) : JSON.stringify({ error: `unknown tool ${tc.function.name}` });
-            } catch (e) {
-              result = JSON.stringify({ error: String((e as Error)?.message ?? e) });
-            }
-            msgs.push(tc.id ? { role: "tool", tool_call_id: tc.id, content: result } : { role: "tool", content: result });
+
+          /* Parallel execution: the model gets one tool result back per call,
+             but independent calls now run at the same time. Multiple engines
+             (Roblox + Unreal) and multiple read/plan tools stop queueing
+             behind each other — this is the single biggest speed win. */
+          const runs = res.toolCalls.map((tc) => {
+            const tool = modelTools.find((t) => t.name === tc.function.name);
+            const isEngine = tc.function.name.startsWith("mcp_") && Boolean(tool);
+            const label = isEngine && tool ? tool.usage : `/${tc.function.name}`;
+            const started = Date.now();
+            logActivity({ kind: "tool-start", text: label, engine: isEngine && tool ? tool.usage.split(" · ")[0] : undefined, detail: summarizeArgs(tc.function.arguments) });
+            const run = async (): Promise<string> => {
+              try {
+                const args = (() => {
+                  try {
+                    return JSON.parse(tc.function.arguments ?? "{}") as Record<string, unknown>;
+                  } catch {
+                    return {};
+                  }
+                })();
+                const out = tool ? await tool.run(args) : JSON.stringify({ error: `unknown tool ${tc.function.name}` });
+                return out;
+              } catch (e) {
+                return JSON.stringify({ error: String((e as Error)?.message ?? e) });
+              }
+            };
+            return { tc, label, isEngine, started, run };
+          });
+          setEmotionFor("working");
+          const settled = await Promise.all(runs.map((r) => r.run().then((out) => ({ r, out }))));
+          for (const { r, out } of settled) {
+            const ms = Date.now() - r.started;
+            const failed = /\berror\b/i.test(out.slice(0, 200));
+            toolsRun += 1;
+            setToolCount((n) => n + 1);
+            logActivity({ kind: "tool-end", text: r.label, engine: r.isEngine && r.label.includes(" · ") ? r.label.split(" · ")[0] : undefined, ok: !failed, detail: out.length > 240 ? `${out.slice(0, 240)}…` : out, ms });
+            msgs.push(r.tc.id ? { role: "tool", tool_call_id: r.tc.id, content: out } : { role: "tool", content: out });
           }
+        }
+        if (stoppedEarly === "time") {
+          finalText = `${finalText ? `${finalText.trim()}\n\n` : ""}I hit this session's work-time limit, so I stopped here — ask me to continue and I'll pick up where I left off.`;
+          announce("*session time limit — paused honestly*", "concerned");
+        } else if (stoppedEarly === "steps") {
+          finalText = `${finalText ? `${finalText.trim()}\n\n` : ""}I reached this session's step budget and paused. Say "continue" and I'll keep building from here.`;
+          announce("*step budget reached — paused honestly*", "concerned");
         }
         if (!finalText.trim()) finalText = "I couldn't produce an answer.";
         push("ai", finalText.trim());
-        announce("*answer ready*", "happy");
+        logActivity({ kind: "reply", text: finalText.trim().slice(0, 220), detail: engineSession ? `${toolsRun} tool call${toolsRun === 1 ? "" : "s"} this session` : undefined });
+        announce(engineSession ? "*build session wrapped up*" : "*answer ready*", "happy");
         setEmotionFor("happy", 1600);
         if (viaVoice) speak(finalText.trim());
 
@@ -1146,11 +1281,11 @@ export function AiProvider({
         if (tone && !viaVoice) setEmotionFor(tone, 2600);
 
         /* Personal memory — when the user shares something personal, Nex
-           quietly extracts durable facts and saves them to _Nex/Memory.md. */
+           quietly extracts durable facts and saves them. This runs in the
+           background so it never delays the reply the user is waiting for. */
         if (PERSONAL_RE.test(text)) {
-          try {
-            const facts = await extractMemoryFacts(cfg, model, text, finalText);
-            if (facts.length > 0) {
+          void extractMemoryFacts(cfg, model, text, finalText)
+            .then(async (facts) => {
               let saved = 0;
               for (const fact of facts) {
                 const entry = await memory.add("fact", fact);
@@ -1165,10 +1300,10 @@ export function AiProvider({
                   announce(comp.ok ? "*memory nearly full — compressed to the essentials*" : "*memory is near its cap*", comp.ok ? "working" : "concerned");
                 }
               }
-            }
-          } catch {
-            // memory is best-effort — never break the answer
-          }
+            })
+            .catch(() => {
+              // memory is best-effort — never surface or break anything
+            });
         }
       } catch (e) {
         const err = e as Error;
@@ -1190,11 +1325,10 @@ export function AiProvider({
         setEmotionFor("concerned", 2200);
         if (viaVoice) speak(reply);
       } finally {
-        window.clearTimeout(timeout);
         setBusy(false);
       }
     },
-    [announce, busy, compactMemory, memory, messages, push, setEmotionFor, tools],
+    [announce, busy, compactMemory, memory, messages, push, setEmotionFor, tools, modelTools, engineTools, mcp, logActivity],
   );
 
   useNexVoice({
@@ -1224,6 +1358,12 @@ export function AiProvider({
     setMessages([]);
     setEmotionFor("idle");
   }, [setEmotionFor]);
+
+  const clearActivity = useCallback(() => {
+    setActivity([]);
+    setToolCount(0);
+    setSessionStart(null);
+  }, []);
 
   const saveConfigCb = useCallback(async (cfg: AiConfig) => {
     setConfig(cfg);
@@ -1271,8 +1411,12 @@ export function AiProvider({
       compactMemory,
       voiceEnabled,
       setVoiceEnabled,
+      activity,
+      sessionStart,
+      toolCount,
+      clearActivity,
     }),
-    [messages, thoughts, busy, emotion, config, tools, send, clearChat, saveConfigCb, testConnection, compactMemory, setListening, setEmotionFor, announce, voiceEnabled],
+    [messages, thoughts, busy, emotion, config, tools, send, clearChat, saveConfigCb, testConnection, compactMemory, setListening, setEmotionFor, announce, voiceEnabled, activity, sessionStart, toolCount, clearActivity],
   );
 
   return <AiContext.Provider value={value}>{children}</AiContext.Provider>;

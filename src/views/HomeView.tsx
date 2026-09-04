@@ -45,6 +45,9 @@ const MONOLOGUE_LINES = [
   "*…I could optimize the startup order… or just vibe. vibe wins.*",
   "*…note to self: the fridge hums in B flat. important stuff.*",
   "*…do candles dream of being blown out? …yes. I checked.*",
+  "*…if Studio were open I'd already be three features in. just saying.*",
+  "*…planning a game in my head. level one: excellent. level two: also excellent.*",
+  "*…no engine, no problem — I'm architecting in pure imagination. it runs great there.*",
 ];
 
 const COVER_LINES = [

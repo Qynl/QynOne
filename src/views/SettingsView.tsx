@@ -1,22 +1,32 @@
 import { motion } from "framer-motion";
 import {
   AlertTriangle,
+  Cable,
   Check,
   Database,
   Download,
   History,
   Palette,
+  Plug,
+  Plus,
   Power,
   RotateCcw,
   SlidersHorizontal,
   Sparkles,
+  SquarePen,
+  Trash2,
+  Unplug,
   Upload,
   User,
+  X,
 } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { Avatar, SectionHeader, Toggle, useUi } from "../components/ui";
 import { listOllamaModels, PROVIDERS, useAi } from "../lib/ai";
 import { getDesktop, isDesktop } from "../lib/desktop";
+import type { McpServerConfig, McpServerStatus } from "../lib/desktop";
+import { MCP_PRESETS, useMcp } from "../lib/mcp";
+import type { McpPreset } from "../lib/mcp";
 import { useQyn } from "../lib/store";
 import { ACCENT_LIST, WALLPAPER_LIST } from "../lib/theme";
 import type { AccentId, QynState, ViewId, WallpaperId } from "../lib/types";
@@ -207,6 +217,9 @@ export function SettingsView({ onNavigate }: { onNavigate: (v: ViewId) => void }
 
           {/* ---- AI assistant ---- */}
           <AiSettingsSection />
+
+          {/* ---- Engine connections (MCP) ---- */}
+          <ConnectionsSection />
 
           {/* ---- Data ---- */}
           <section className="glass rounded-2xl p-5">
@@ -560,6 +573,335 @@ function AiSettingsSection() {
         {isDesktop()
           ? "Saved locally in your user data folder (qynone.env, next to qynone-state.json). The API key never leaves this PC and is never logged."
           : "Saved in this browser for the preview. In the desktop app the same settings live in qynone.env on your PC. Note: in the web preview, a localhost Ollama instance can't be reached — use OpenAI or a public endpoint here."}
+      </p>
+    </section>
+  );
+}
+
+/* ------------------------------------------------------------------ */
+/* Engine connections (MCP) — Roblox Studio, Unreal Engine and any     */
+/* MCP server. Nex gets the engine's tools in chat the moment one      */
+/* connects.                                                           */
+/* ------------------------------------------------------------------ */
+
+const TRANSPORT_LABEL: Record<McpServerStatus["transport"], string> = {
+  stdio: "stdio · launch command",
+  http: "http · endpoint",
+};
+
+const STATE_DOT: Record<McpServerStatus["state"], string> = {
+  idle: "bg-zinc-500",
+  connecting: "animate-pulse bg-amber-300",
+  connected: "bg-emerald-400 shadow-[0_0_8px_rgba(52,211,153,0.8)]",
+  error: "bg-rose-400",
+};
+
+const STATE_LABEL: Record<McpServerStatus["state"], string> = {
+  idle: "Not connected",
+  connecting: "Connecting…",
+  connected: "Connected",
+  error: "Offline",
+};
+
+function envToLines(env: Record<string, string>): string {
+  return Object.entries(env)
+    .map(([k, v]) => `${k}=${v}`)
+    .join("\n");
+}
+
+function linesToEnv(raw: string): Record<string, string> {
+  const out: Record<string, string> = {};
+  for (const line of raw.split(/\r?\n/)) {
+    const m = line.match(/^\s*([A-Za-z0-9_]+)\s*=\s*(.*?)\s*$/);
+    if (m) out[m[1]] = m[2];
+  }
+  return out;
+}
+
+function ConnectionsSection() {
+  const mcp = useMcp();
+  const { toast } = useUi();
+  const [editing, setEditing] = useState<null | { id: string; draft: McpServerConfig }>(null);
+  const [saving, setSaving] = useState(false);
+
+  const beginNew = (preset: McpPreset) => {
+    const built = preset.build();
+    setEditing({ id: "new", draft: { ...built, id: "" } });
+  };
+
+  const beginEdit = (server: McpServerStatus) => {
+    setEditing({ id: server.id, draft: { ...server } });
+  };
+
+  const patchDraft = (p: Partial<McpServerConfig>) => {
+    setEditing((e) => (e ? { ...e, draft: { ...e.draft, ...p } } : e));
+  };
+
+  async function persist() {
+    if (!editing) return;
+    const { id, draft } = editing;
+    const name = draft.name.trim();
+    if (!name) {
+      toast("Give the connection a name", { icon: <AlertTriangle size={15} className="text-amber-300" /> });
+      return;
+    }
+    if (draft.transport === "stdio" && !draft.command.trim()) {
+      toast("A stdio connection needs a launch command", { icon: <AlertTriangle size={15} className="text-amber-300" /> });
+      return;
+    }
+    if (draft.transport === "http" && !/^https?:\/\//i.test(draft.url.trim())) {
+      toast("An HTTP connection needs a URL like http://127.0.0.1:8000/mcp", { icon: <AlertTriangle size={15} className="text-amber-300" /> });
+      return;
+    }
+    setSaving(true);
+    try {
+      const res = await mcp.save({ ...draft, name });
+      if (!res.ok) {
+        toast(res.error ?? "Couldn't save the connection", { icon: <AlertTriangle size={15} className="text-amber-300" /> });
+        return;
+      }
+      toast(id === "new" ? `${name} added` : `${name} updated`);
+      setEditing(null);
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  return (
+    <section className="glass rounded-2xl p-5">
+      <SectionHeader title="Connections · MCP" icon={<Cable size={13} className="text-accent" />} />
+      <p className="text-[12.5px] leading-relaxed text-frost-500">
+        Give Nex <span className="text-frost-300">real hands inside your tools</span>. Roblox Studio and Unreal Engine
+        ship official MCP servers; once connected, every tool the engine exposes becomes callable in chat — Nex can
+        read and write scripts, run code and drive the editor live.
+      </p>
+
+      {!isDesktop() && (
+        <p className="mt-3 rounded-xl border border-amber-300/15 bg-amber-300/[0.05] px-3.5 py-2.5 text-[12px] leading-relaxed text-amber-200/90">
+          MCP connections live in the QynOne desktop app — engines run on your PC, so this web preview can't reach
+          them. Install the desktop build to connect Roblox Studio or Unreal Engine.
+        </p>
+      )}
+
+      {!editing && (
+        <div className="mt-4 flex flex-wrap items-center gap-2">
+          {MCP_PRESETS.map((preset) => (
+            <button
+              key={preset.key}
+              onClick={() => beginNew(preset)}
+              disabled={!mcp.supported}
+              className="glass-soft inline-flex h-9 items-center gap-2 rounded-xl px-3.5 text-[12.5px] font-medium text-frost-300 transition hover:border-[color-mix(in_srgb,var(--accent)_35%,transparent)] hover:text-frost-100 disabled:cursor-not-allowed disabled:opacity-40"
+            >
+              <Plus size={13} className="text-accent" />
+              {preset.key === "custom" ? "Custom MCP server" : preset.label}
+            </button>
+          ))}
+        </div>
+      )}
+
+      {/* Edit form */}
+      {editing && (
+        <div className="mt-4 rounded-2xl border border-white/8 bg-black/15 p-4">
+          <div className="flex items-center justify-between gap-2">
+            <p className="text-[12.5px] font-semibold text-frost-100">
+              {editing.id === "new" ? "New connection" : "Edit connection"}
+            </p>
+            <button onClick={() => setEditing(null)} className="grid h-6 w-6 place-items-center rounded-md text-frost-500 transition hover:bg-white/6 hover:text-frost-200">
+              <X size={13} />
+            </button>
+          </div>
+
+          <div className="mt-3 grid gap-3 sm:grid-cols-2">
+            <div>
+              <p className="mb-1.5 text-[11px] font-medium tracking-wide text-frost-400">Name</p>
+              <input
+                value={editing.draft.name}
+                onChange={(e) => patchDraft({ name: e.target.value })}
+                placeholder="Roblox Studio"
+                className="h-9 w-full rounded-xl border border-white/10 bg-white/5 px-3 text-[12.5px] text-frost-100 outline-none transition placeholder:text-frost-500/70 focus:border-[color-mix(in_srgb,var(--accent)_55%,transparent)]"
+              />
+            </div>
+            <div>
+              <p className="mb-1.5 text-[11px] font-medium tracking-wide text-frost-400">Transport</p>
+              <div className="flex gap-1.5">
+                {(
+                  [
+                    { id: "stdio" as const, label: "stdio (command)" },
+                    { id: "http" as const, label: "http (URL)" },
+                  ]
+                ).map((t) => (
+                  <button
+                    key={t.id}
+                    onClick={() =>
+                      patchDraft({
+                        transport: t.id,
+                        ...(t.id === "http" ? { command: "", args: [] } : { url: "" }),
+                      })
+                    }
+                    className={cn(
+                      "h-9 rounded-xl border px-3 text-[11.5px] font-medium transition",
+                      editing.draft.transport === t.id
+                        ? "border-[color-mix(in_srgb,var(--accent)_55%,transparent)] bg-accent-soft text-frost-100"
+                        : "border-white/8 bg-white/4 text-frost-400 hover:bg-white/8",
+                    )}
+                  >
+                    {t.label}
+                  </button>
+                ))}
+              </div>
+            </div>
+          </div>
+
+          {editing.draft.transport === "stdio" ? (
+            <div className="mt-3 space-y-3">
+              <div>
+                <p className="mb-1.5 text-[11px] font-medium tracking-wide text-frost-400">Command</p>
+                <input
+                  value={editing.draft.command}
+                  onChange={(e) => patchDraft({ command: e.target.value })}
+                  placeholder={'cmd.exe'}
+                  className="h-9 w-full rounded-xl border border-white/10 bg-white/5 px-3 font-mono text-[12px] text-frost-100 outline-none transition placeholder:text-frost-500/70 focus:border-[color-mix(in_srgb,var(--accent)_55%,transparent)]"
+                />
+              </div>
+              <div>
+                <p className="mb-1.5 text-[11px] font-medium tracking-wide text-frost-400">
+                  Arguments <span className="normal-case text-frost-600">(one per line · %ENV% expands)</span>
+                </p>
+                <textarea
+                  value={editing.draft.args.join("\n")}
+                  onChange={(e) => patchDraft({ args: e.target.value.split(/\r?\n/).filter((a) => a.trim()) })}
+                  placeholder={'/c\n%LOCALAPPDATA%\\Roblox\\mcp.bat'}
+                  rows={2}
+                  className="w-full resize-none rounded-xl border border-white/10 bg-white/5 px-3 py-2 font-mono text-[12px] text-frost-100 outline-none transition placeholder:text-frost-500/70 focus:border-[color-mix(in_srgb,var(--accent)_55%,transparent)]"
+                />
+              </div>
+              <div>
+                <p className="mb-1.5 text-[11px] font-medium tracking-wide text-frost-400">
+                  Environment <span className="normal-case text-frost-600">(optional · KEY=VALUE per line)</span>
+                </p>
+                <textarea
+                  value={envToLines(editing.draft.env)}
+                  onChange={(e) => patchDraft({ env: linesToEnv(e.target.value) })}
+                  rows={2}
+                  className="w-full resize-none rounded-xl border border-white/10 bg-white/5 px-3 py-2 font-mono text-[12px] text-frost-100 outline-none transition placeholder:text-frost-500/70 focus:border-[color-mix(in_srgb,var(--accent)_55%,transparent)]"
+                />
+              </div>
+            </div>
+          ) : (
+            <div className="mt-3">
+              <p className="mb-1.5 text-[11px] font-medium tracking-wide text-frost-400">MCP endpoint URL</p>
+              <input
+                value={editing.draft.url}
+                onChange={(e) => patchDraft({ url: e.target.value })}
+                placeholder="http://127.0.0.1:8000/mcp"
+                className="h-9 w-full rounded-xl border border-white/10 bg-white/5 px-3 font-mono text-[12px] text-frost-100 outline-none transition placeholder:text-frost-500/70 focus:border-[color-mix(in_srgb,var(--accent)_55%,transparent)]"
+              />
+            </div>
+          )}
+
+          <div className="mt-3 flex items-center justify-between gap-3">
+            <div className="flex items-center gap-2">
+              <Toggle checked={editing.draft.autoConnect} onChange={(v) => patchDraft({ autoConnect: v })} />
+              <span className="text-[11.5px] text-frost-400">Connect automatically when QynOne starts</span>
+            </div>
+            <div className="flex gap-2">
+              <button
+                onClick={() => setEditing(null)}
+                className="h-9 rounded-xl border border-white/10 bg-white/5 px-3.5 text-[12px] font-medium text-frost-400 transition hover:bg-white/10 hover:text-frost-200"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={persist}
+                disabled={saving}
+                className="inline-flex h-9 items-center gap-2 rounded-xl bg-[var(--accent)] px-4 text-[12px] font-semibold text-white transition hover:brightness-110 active:scale-[0.98] disabled:opacity-50"
+              >
+                <Check size={13} /> {saving ? "Saving…" : "Save connection"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Server list */}
+      {mcp.servers.length > 0 && !editing && (
+        <div className="mt-4 space-y-2">
+          {mcp.servers.map((server) => {
+            const busy = mcp.connectingIds.includes(server.id) || server.state === "connecting";
+            return (
+              <div key={server.id} className="rounded-xl border border-white/7 bg-white/[0.025] px-3.5 py-3">
+                <div className="flex items-center gap-2.5">
+                  <span className={cn("h-2 w-2 shrink-0 rounded-full", STATE_DOT[server.state])} />
+                  <div className="min-w-0 flex-1">
+                    <div className="flex items-center gap-2">
+                      <p className="truncate text-[13px] font-semibold text-frost-100">{server.name}</p>
+                      <span className="rounded-md bg-white/6 px-1.5 py-0.5 text-[9.5px] font-medium text-frost-500">
+                        {TRANSPORT_LABEL[server.transport]}
+                      </span>
+                    </div>
+                    <p className="mt-0.5 truncate text-[11px] text-frost-500">
+                      {server.state === "connected"
+                        ? `${STATE_LABEL[server.state]} · ${server.tools.length} tool${server.tools.length === 1 ? "" : "s"} (${server.tools.slice(0, 5).map((t) => t.name).join(", ")}${server.tools.length > 5 ? "…" : ""})`
+                        : server.state === "error"
+                          ? `${server.error || "Connection failed"}`
+                          : STATE_LABEL[server.state]}
+                    </p>
+                  </div>
+                  {server.state === "error" && server.log.length > 0 && (
+                    <p className="hidden max-w-[180px] truncate text-[10px] text-frost-600 md:block" title={server.log.join("\n")}>
+                      {server.log[server.log.length - 1]}
+                    </p>
+                  )}
+                  <div className="flex shrink-0 items-center gap-1">
+                    {server.state === "connected" ? (
+                      <button
+                        onClick={() => void mcp.disconnect(server.id)}
+                        title="Disconnect"
+                        className="grid h-7 w-7 place-items-center rounded-lg text-frost-500 transition hover:bg-white/6 hover:text-frost-200"
+                      >
+                        <Unplug size={13} />
+                      </button>
+                    ) : (
+                      <button
+                        onClick={() => void mcp.connect(server.id)}
+                        disabled={busy}
+                        title="Connect"
+                        className="grid h-7 w-7 place-items-center rounded-lg text-frost-500 transition hover:bg-accent-soft hover:text-frost-100 disabled:opacity-40"
+                      >
+                        {busy ? <span className="h-3 w-3 animate-spin rounded-full border-[1.5px] border-white/15 border-t-white/70" /> : <Plug size={13} />}
+                      </button>
+                    )}
+                    <button
+                      onClick={() => beginEdit(server)}
+                      title="Edit"
+                      className="grid h-7 w-7 place-items-center rounded-lg text-frost-500 transition hover:bg-white/6 hover:text-frost-200"
+                    >
+                      <SquarePen size={13} />
+                    </button>
+                    <button
+                      onClick={() => {
+                        if (window.confirm(`Remove the ${server.name} connection?`)) void mcp.remove(server.id);
+                      }}
+                      title="Remove"
+                      className="grid h-7 w-7 place-items-center rounded-lg text-frost-600 transition hover:bg-red-400/10 hover:text-red-300"
+                    >
+                      <Trash2 size={13} />
+                    </button>
+                  </div>
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      )}
+
+      <p className="mt-4 border-t border-white/6 pt-3 text-[11px] leading-relaxed text-frost-500">
+        <span className="font-medium text-frost-400">Roblox Studio:</span> open Studio → Assistant → ⋯ → Manage MCP
+        Servers → enable “Studio as MCP server”. It must stay open while Nex works.
+        <br />
+        <span className="font-medium text-frost-400">Unreal Engine (5.6+):</span> enable the <em>Unreal MCP</em> and{" "}
+        <em>All Toolsets</em> plugins in the editor, then run <code className="text-frost-300">ModelContextProtocol.StartServer</code>{" "}
+        (or turn on Auto Start Server in Editor Preferences → Model Context Protocol). Nex connects over local HTTP.
       </p>
     </section>
   );

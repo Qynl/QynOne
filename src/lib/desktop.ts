@@ -58,6 +58,47 @@ export interface AiConfig {
   key: string;
 }
 
+export type McpTransport = "stdio" | "http";
+
+export interface McpServerConfig {
+  id: string;
+  name: string;
+  transport: McpTransport;
+  /** stdio: the command to launch (env vars like %LOCALAPPDATA% are expanded by the main process) */
+  command: string;
+  args: string[];
+  /** http: Streamable HTTP endpoint, e.g. http://127.0.0.1:8000/mcp (Unreal MCP) */
+  url: string;
+  env: Record<string, string>;
+  autoConnect: boolean;
+}
+
+export interface McpToolInfo {
+  name: string;
+  description: string;
+  parameters: Record<string, unknown>;
+}
+
+export type McpState = "idle" | "connecting" | "connected" | "error";
+
+export interface McpServerStatus extends McpServerConfig {
+  state: McpState;
+  error: string;
+  /** recent process log lines (last few), for diagnosing a failed connect */
+  log: string[];
+  tools: McpToolInfo[];
+}
+
+/** A single engine tool flattened for the AI layer. */
+export interface McpTool {
+  serverId: string;
+  serverName: string;
+  serverSlug: string;
+  name: string;
+  description: string;
+  parameters: Record<string, unknown>;
+}
+
 export interface DesktopBridge {
   platform: string;
   loadState: () => Promise<QynState | null>;
@@ -99,6 +140,16 @@ export interface DesktopBridge {
   floatClose: () => Promise<{ open: boolean }>;
   /** Notified whenever the floating Nex window opens or closes. */
   onFloatChanged: (cb: (open: boolean) => void) => () => void;
+
+  /* MCP connections — Roblox Studio, Unreal Engine and any MCP server */
+  mcpList: () => Promise<McpServerStatus[]>;
+  mcpSave: (cfg: McpServerConfig) => Promise<{ ok: boolean; error?: string; id?: string; status?: McpServerStatus }>;
+  mcpRemove: (id: string) => Promise<{ ok: boolean; error?: string }>;
+  mcpConnect: (id: string) => Promise<{ ok: boolean; error?: string; status?: McpServerStatus }>;
+  mcpDisconnect: (id: string) => Promise<{ ok: boolean; error?: string }>;
+  mcpCall: (id: string, tool: string, args: Record<string, unknown>) => Promise<{ ok: boolean; result?: string; error?: string }>;
+  /** Notified with the full server list whenever any connection changes. */
+  mcpOnChanged: (cb: (servers: McpServerStatus[]) => void) => () => void;
 }
 
 /** True when running inside the QynOne desktop app. */

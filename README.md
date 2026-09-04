@@ -58,6 +58,20 @@ broken.
   **Amazon Music** on exactly what you asked (*"Nex, play lofi hip hop"*), puts on headphones, sways to the beat
   and shows the track under the eyes with live equalizer bars. `/music <song/artist/album>` and `/music-stop`
   control the session, and telling him *"I'm actually listening to X"* updates the caption.
+- **Real hands in your engines (MCP).** **Settings → Connections** gives Nex live connections to the official
+  **Roblox Studio** and **Unreal Engine** MCP servers — plus any custom MCP server (stdio launch command or HTTP
+  endpoint). The moment an engine is online, its own tools become functions Nex can call in chat: Roblox Studio's
+  script reading/editing (`script_read`, `multi_edit`), Luau execution, asset search/insert and playtesting; Unreal's
+  actor, material, scene and toolset functions through its embedded MCP server. He reads your real scripts first,
+  makes small verified edits, and never hides a failure. Connections stay local (localhost/stdin on your PC, config
+  in `qynone-mcp.json`) and are  visible in the Nex page's Engines panel — ask *"fix my Roblox script"* or
+  *"move that actor 100 units"* once Studio or the Unreal editor is running.
+  With an engine connected Nex runs **autonomous build sessions**: give him a goal like *"make a really good
+  tactical shooter in Roblox"* and he plans, builds, tests through the engine (play mode, console, screen
+  capture), critically evaluates his own work, improves it and tests again — within a large per-session step
+  budget, pausing honestly if he hits it. The MCP connection is strictly his only pair of hands: no filesystem,
+  shell or system access is ever granted — everything happens through the engine's own tools, inside the project
+  that connection exposes.
 - **A real system prompt you can read.** Nex's entire identity and rulebook live in plain Markdown in the repo
   (`src/system-prompt.md`) — who he is, his personality, what he can really do with your PC, the vault/memory
   budgets, voice behavior and honesty rules. It *is* the system prompt sent with every request; only a short
@@ -164,6 +178,7 @@ bun run dist:win
 | Workspaces | Metadata only — a workspace is a list of app ids. Launching it opens each real app through Windows' shell, staggered, one by one. |
 | Live system stats | CPU %, memory, uptime, hostname, hardware — read via ordinary OS APIs at user level. Never simulated: when the bridge can't read the PC (e.g. the web preview), the UI shows an honest empty state. QynOne never requests elevated access. |
 | Start with Windows | A real per-user Windows startup entry (HKCU Run) managed through the OS — toggled in **Settings → Startup**. No admin, no Startup-folder hacks; it points at the installed QynOne executable itself. |
+| MCP engine connections (Roblox Studio, Unreal Engine…) | Server configs (command/args/URL/env) saved to `%APPDATA%\QynOne\qynone-mcp.json`. The client connects over stdio (Roblox) or localhost HTTP (Unreal) at user level — nothing leaves the PC, and engine tool calls go straight to the open editor. |
 | File Center | Browsing is read-only (`readdir` + metadata). Opening a file/folder goes through Windows' shell like a double-click. |
 | Finding installed apps | "Find on this PC…" in the app editor reads your Start Menu shortcuts (`.lnk`/`.url`) — **read-only**. |
 | Virtual folders | Metadata only. QynOne never moves, copies, renames, or touches the real applications/folders on your PC. |
