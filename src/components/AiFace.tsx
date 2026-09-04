@@ -136,6 +136,7 @@ export function AiFace({
   headphones = false,
   dance = false,
   crossed = false,
+  intensity = 1,
 }: {
   emotion: AiEmotion;
   size?: number;
@@ -147,6 +148,9 @@ export function AiFace({
   dance?: boolean;
   /** easter egg — both eyes turn inward like he's staring cross-eyed */
   crossed?: boolean;
+  /** 0..1 contextual strength — subtly scales openness and glow without
+      changing the emotion's shape or visual language (1 = as designed) */
+  intensity?: number;
 }) {
   const spec = SPECS[emotion] ?? SPECS.idle;
   const [blinkL, setBlinkL] = useState(false);
@@ -194,7 +198,8 @@ export function AiFace({
   const eyeW = Math.round(size * 0.34);
   const eyeH = Math.round(size * 0.27);
   const gap = Math.round(size * 0.16);
-  const openY = booted ? spec.open : 0.04;
+  const glowMult = spec.dim ? 1 : Math.min(1.35, Math.max(0.7, 0.82 + intensity * 0.35));
+  const openY = booted ? Math.min(1.22, Math.max(0.03, spec.open * (spec.dim ? 1 : 0.9 + intensity * 0.12))) : 0.04;
   /* A small gaze follows the user's pointer without adding pupils or a face. */
   const leanX = (spec.leanX + gazeX) * size * 0.025;
   const leanY = (spec.leanY + gazeY) * size * 0.035;
@@ -217,7 +222,7 @@ export function AiFace({
         className="pointer-events-none absolute inset-0 rounded-full blur-3xl transition-opacity duration-700"
         style={{
           background: `radial-gradient(ellipse 58% 54% at 50% 58%, ${glowBase}, transparent 70%)`,
-          opacity: booted ? spec.glow : 0,
+          opacity: booted ? Math.min(1.5, spec.glow * glowMult) : 0,
         }}
       />
 

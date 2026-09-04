@@ -5,6 +5,7 @@ import type { PointerEvent as ReactPointerEvent } from "react";
 import { AiFace } from "../components/AiFace";
 import { NexThoughtStream } from "../components/NexPresence";
 import { useAi, type AiEmotion } from "../lib/ai";
+import { CALM_BASE } from "../lib/emotion";
 import { stopSpeaking } from "../lib/speech";
 import { useQyn } from "../lib/store";
 import { useStats } from "../lib/stats";
@@ -61,7 +62,7 @@ const COVER_LINES = [
 /** The Home surface is intentionally quiet: Nex's eyes, time/date, and two useful context hints. */
 export function HomeView({ onNavigate }: { onNavigate?: (view: ViewId) => void }) {
   const { state } = useQyn();
-  const { emotion, busy, messages, thoughts, voiceEnabled, setVoiceEnabled, announce } = useAi();
+  const { emotion, busy, messages, thoughts, voiceEnabled, setVoiceEnabled, announce, react, intensity: emotionIntensity } = useAi();
   const stats = useStats();
   const sys = useSystemInfo();
   const [gaze, setGaze] = useState({ x: 0, y: 0 });
@@ -281,6 +282,7 @@ export function HomeView({ onNavigate }: { onNavigate?: (view: ViewId) => void }
         if (eggsAllowedRef.current && now > partyCooldown.current) {
           partyCooldown.current = now + 15000;
           showAmbient("party", 2400);
+          react({ kind: "play", scene: "party" });
           announce("*it's a party now. I decided. no refunds.*", "party");
         }
       } else if (typed.endsWith("sleep")) {
@@ -288,6 +290,7 @@ export function HomeView({ onNavigate }: { onNavigate?: (view: ViewId) => void }
         if (eggsAllowedRef.current && now > sleepCooldown.current) {
           sleepCooldown.current = now + 20000;
           setAmbient("sleeping");
+          react({ kind: "play", scene: "sleep" });
           sleepTimer.current = window.setTimeout(() => {
             sleepTimer.current = null;
             showAmbient("shocked", 1500);
@@ -378,10 +381,14 @@ export function HomeView({ onNavigate }: { onNavigate?: (view: ViewId) => void }
   };
 
   /* Urgent moments (notification, event, load, offline, music) override the
-     baseline; otherwise Nex follows the real phase of the day. */
+     baseline; otherwise Nex follows the real phase of the day. The provider's
+     emotion surfaces whenever it means something real — a finished build, a
+     reaction, voice — while calm base states stay invisible so Home's own
+     ambient (phase mood, doze scene, easter eggs) keeps the lead. */
+  const providerMeaningful = busy || !CALM_BASE.has(emotion);
   const visualEmotion = !sys.online
     ? "offline"
-    : busy
+    : providerMeaningful
       ? emotion
       : ambient !== "idle"
         ? ambient
@@ -506,6 +513,7 @@ export function HomeView({ onNavigate }: { onNavigate?: (view: ViewId) => void }
             headphones={eyesHeadphones}
             dance={eyesHeadphones}
             crossed={crossed}
+            intensity={providerMeaningful ? emotionIntensity : 1}
           />
           {/* the only control on Home — a quiet little voice toggle under the
               eyes. Nex himself is not clickable; he's just the eyes. */}

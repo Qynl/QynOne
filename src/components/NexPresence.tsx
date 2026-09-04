@@ -33,7 +33,7 @@ const VIEW_LABELS: Record<ViewId, string> = {
  * the user can verify in QynOne.
  */
 export function NexPresence({ view, onOpen }: { view: ViewId; onOpen: () => void }) {
-  const { thoughts, emotion, announce, voiceEnabled, setVoiceEnabled, setEmotion } = useAi();
+  const { thoughts, emotion, announce, voiceEnabled, setVoiceEnabled, react, intensity } = useAi();
   const { state } = useQyn();
   const stats = useStats();
   const sys = useSystemInfo();
@@ -67,26 +67,29 @@ export function NexPresence({ view, onOpen }: { view: ViewId; onOpen: () => void
     if (lastView.current === view) return;
     lastView.current = view;
     if (view === "home") {
-      announce("*settling in at home*", "present");
+      announce("*settling in at home*");
       return;
     }
-    announce(`*looking through ${VIEW_LABELS[view]}*`, "scanning");
-  }, [view, announce]);
+    announce(`*looking through ${VIEW_LABELS[view]}*`);
+    react({ kind: "view-change", view });
+  }, [view, announce, react]);
 
   useEffect(() => {
     const item = state.notifications.find((notification) => !notification.read);
     if (!item || item.id === lastNotification.current) return;
     lastNotification.current = item.id;
     const text = `*new notification: ${item.title}*`;
-    announce(text, item.kind === "warn" ? "alert" : "notification", item.kind === "warn");
-  }, [state.notifications, announce]);
+    announce(text, undefined, item.kind === "warn");
+    react({ kind: "notification", severity: item.kind === "warn" ? "warn" : "info" });
+  }, [state.notifications, announce, react]);
 
   useEffect(() => {
     if (missed) {
       const key = `missed:${missed.id}`;
       if (key === lastEventAlert.current) return;
       lastEventAlert.current = key;
-      announce(`*you missed ${missed.title} on ${relativeDay(missed.date)}*`, "missedEvent", true);
+      announce(`*you missed ${missed.title} on ${relativeDay(missed.date)}*`, undefined, true);
+      react({ kind: "calendar", sub: "missed", id: missed.id });
       return;
     }
     if (!nextEvent) return;
@@ -100,9 +103,10 @@ export function NexPresence({ view, onOpen }: { view: ViewId; onOpen: () => void
       const key = `next:${nextEvent.id}`;
       if (key === lastEventAlert.current) return;
       lastEventAlert.current = key;
-      announce(`*${nextEvent.title} is coming up soon*`, "eventSoon", true);
+      announce(`*${nextEvent.title} is coming up soon*`, undefined, true);
+      react({ kind: "calendar", sub: "soon", id: nextEvent.id });
     }
-  }, [missed, nextEvent, announce]);
+  }, [missed, nextEvent, announce, react]);
 
   useEffect(() => {
     if (!stats) return;
@@ -114,8 +118,9 @@ export function NexPresence({ view, onOpen }: { view: ViewId; onOpen: () => void
     const signature = `${Math.round(stats.cpuPct / 5)}:${Math.round((stats.memUsedBytes / stats.memTotalBytes) * 20)}`;
     if (signature === lastSystemAlert.current) return;
     lastSystemAlert.current = signature;
-    announce(`*your PC is under heavy load: ${stats.cpuPct}% CPU*`, "powerful", true);
-  }, [stats, announce]);
+    announce(`*your PC is under heavy load: ${stats.cpuPct}% CPU*`, undefined, true);
+    react({ kind: "system-load" });
+  }, [stats, announce, react]);
 
   useEffect(() => {
     const count = vault.notes.length;
@@ -124,29 +129,23 @@ export function NexPresence({ view, onOpen }: { view: ViewId; onOpen: () => void
       return;
     }
     if (count !== lastVaultCount.current && view === "vault") {
-      announce(`*the vault now has ${count} note${count === 1 ? "" : "s"}*`, "remembering");
+      announce(`*the vault now has ${count} note${count === 1 ? "" : "s"}*`);
+      react({ kind: "memory-saved" });
     }
     lastVaultCount.current = count;
-  }, [vault.notes.length, view, announce]);
-
-  useEffect(() => {
-    const onSpeaking = (event: Event) => {
-      const active = Boolean((event as CustomEvent<{ active?: boolean }>).detail?.active);
-      setEmotion(active ? "speaking" : "settled", active ? undefined : 1100);
-    };
-    window.addEventListener("qyn:nex-speaking", onSpeaking);
-    return () => window.removeEventListener("qyn:nex-speaking", onSpeaking);
-  }, [setEmotion]);
+  }, [vault.notes.length, view, announce, react]);
 
   useEffect(() => {
     if (sys.online) {
+      if (lastOffline.current) react({ kind: "network", on: true });
       lastOffline.current = false;
       return;
     }
     if (lastOffline.current) return;
     lastOffline.current = true;
-    announce("*the network connection is offline*", "offline", true);
-  }, [sys.online, announce]);
+    announce("*the network connection is offline*", undefined, true);
+    react({ kind: "network", on: false });
+  }, [sys.online, announce, react]);
 
   /* The Nex bubble can be dragged anywhere — it is a little companion, not
      glued to the corner. Plain clicks still work; only real drags move it. */
@@ -235,7 +234,7 @@ export function NexPresence({ view, onOpen }: { view: ViewId; onOpen: () => void
     >
       <div className="glass-soft flex w-full flex-col items-center rounded-2xl px-3 pb-2.5 pt-2 transition hover:border-accent-soft hover:bg-white/[0.045]">
         <button type="button" onClick={onOpen} className="flex w-full flex-col items-center" aria-label="Open Nex workspace">
-          <AiFace emotion={emotion} size={104} headphones={Boolean(music)} dance={Boolean(music)} />
+          <AiFace emotion={emotion} size={104} intensity={intensity} headphones={Boolean(music)} dance={Boolean(music)} />
           {music ? <p className="mt-0.5 w-full truncate px-1 text-center text-[8.5px] italic leading-3 text-accent">♫ {music.title}</p> : <NexThoughtStream thoughts={visibleThoughts} compact />}
         </button>
         <button

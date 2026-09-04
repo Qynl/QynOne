@@ -4,6 +4,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { AiFace } from "./AiFace";
 import { useAi } from "../lib/ai";
 import type { AgentEvent } from "../lib/ai";
+import { CALM_BASE } from "../lib/emotion";
 import { useMcp } from "../lib/mcp";
 import { useMusic } from "../lib/music";
 import { cn } from "../lib/utils";
@@ -36,7 +37,7 @@ function elapsed(from: number): string {
  * the results and the phases of an autonomous build session.
  */
 export function AgentActivity({ onBack }: { onBack?: () => void }) {
-  const { activity, busy, emotion, sessionStart, toolCount, clearActivity, messages, stopSession, stopRequested } = useAi();
+  const { activity, busy, emotion, sessionStart, toolCount, clearActivity, messages, stopSession, stopRequested, intensity } = useAi();
   const mcp = useMcp();
   const music = useMusic();
   const [autoScroll, setAutoScroll] = useState(true);
@@ -110,7 +111,7 @@ export function AgentActivity({ onBack }: { onBack?: () => void }) {
       <div className="glass mt-5 shrink-0 rounded-2xl p-4">
         <div className="flex flex-wrap items-center gap-4">
           <div className="shrink-0">
-            <AiFace emotion={busy ? emotion : "idle"} size={84} headphones={Boolean(music)} dance={Boolean(music)} />
+            <AiFace emotion={busy || !CALM_BASE.has(emotion) ? emotion : "idle"} size={84} headphones={Boolean(music)} dance={Boolean(music)} intensity={intensity} />
           </div>
           <div className="min-w-0 flex-1">
             <div className="flex items-center gap-2">

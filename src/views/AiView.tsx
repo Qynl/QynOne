@@ -3,7 +3,9 @@ import { Activity, ArrowRight, Bot, Cable, ChevronRight, Command, PictureInPictu
 import { useEffect, useRef, useState } from "react";
 import { AgentActivity, AgentActivityMini } from "../components/AgentActivity";
 import { AiFace } from "../components/AiFace";
+import { EmotionDebugger } from "../components/EmotionDebugger";
 import { useAi } from "../lib/ai";
+import { CALM_BASE } from "../lib/emotion";
 import { getDesktop, isDesktop } from "../lib/desktop";
 import type { McpServerStatus } from "../lib/desktop";
 import { useMcp } from "../lib/mcp";
@@ -19,7 +21,7 @@ const ENGINE_DOT: Record<McpServerStatus["state"], string> = {
 };
 
 export function AiView({ onNavigate }: { onNavigate: (view: ViewId) => void }) {
-  const { messages, busy, emotion, tools, send, clearChat, activity, stopSession, stopRequested } = useAi();
+  const { messages, busy, emotion, tools, send, clearChat, activity, stopSession, stopRequested, intensity } = useAi();
   const mcp = useMcp();
   const music = useMusic();
   const [draft, setDraft] = useState("");
@@ -142,7 +144,7 @@ export function AiView({ onNavigate }: { onNavigate: (view: ViewId) => void }) {
                     : "Ready when you are"}
               </p>
             </div>
-            <AiFace emotion={busy ? emotion : "idle"} size={72} headphones={Boolean(music)} dance={Boolean(music)} />
+            <AiFace emotion={busy || !CALM_BASE.has(emotion) ? emotion : "idle"} size={72} headphones={Boolean(music)} dance={Boolean(music)} intensity={intensity} />
           </div>
 
           <div className="accent-scroll min-h-0 flex-1 space-y-3 overflow-y-auto p-4">
@@ -283,6 +285,8 @@ export function AiView({ onNavigate }: { onNavigate: (view: ViewId) => void }) {
           <AgentActivityMini onOpen={() => setTab("activity")} />
         </aside>
       </div>
+      {/* Development-only emotion debugger — live decisions, tunable. */}
+      {import.meta.env.DEV && <EmotionDebugger />}
     </div>
   );
 }

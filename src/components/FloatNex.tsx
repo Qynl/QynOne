@@ -21,7 +21,7 @@ import { AnimatePresence, motion } from "framer-motion";
  */
 export function FloatNex() {
   const { state } = useQyn();
-  const { emotion, busy, voiceEnabled, setVoiceEnabled } = useAi();
+  const { emotion, busy, voiceEnabled, setVoiceEnabled, intensity } = useAi();
   const [ambient, setAmbient] = useState<AiEmotion>("boot");
   const ambientRef = useRef<AiEmotion>("boot");
   const ambientTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -186,7 +186,7 @@ export function FloatNex() {
           className="cursor-pointer rounded-[40px] outline-none"
           aria-label="Talk to Nex"
         >
-          <AiFace emotion={visualEmotion} gazeX={gaze.x} gazeY={gaze.y} size={size} headphones={musicLook} dance={musicLook} />
+          <AiFace emotion={visualEmotion} gazeX={gaze.x} gazeY={gaze.y} size={size} headphones={musicLook} dance={musicLook} intensity={intensity} />
         </button>
       </div>
 
