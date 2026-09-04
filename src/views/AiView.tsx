@@ -1,5 +1,5 @@
 import { AnimatePresence, motion } from "framer-motion";
-import { Activity, ArrowRight, Bot, Cable, ChevronRight, Command, PictureInPicture2, Plug, Plus, Send, Sparkles, Wrench } from "lucide-react";
+import { Activity, ArrowRight, Bot, Cable, ChevronRight, Command, PictureInPicture2, Plug, Plus, Send, Sparkles, Square, Wrench } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { AgentActivity, AgentActivityMini } from "../components/AgentActivity";
 import { AiFace } from "../components/AiFace";
@@ -19,7 +19,7 @@ const ENGINE_DOT: Record<McpServerStatus["state"], string> = {
 };
 
 export function AiView({ onNavigate }: { onNavigate: (view: ViewId) => void }) {
-  const { messages, busy, emotion, tools, send, clearChat, activity } = useAi();
+  const { messages, busy, emotion, tools, send, clearChat, activity, stopSession, stopRequested } = useAi();
   const mcp = useMcp();
   const music = useMusic();
   const [draft, setDraft] = useState("");
@@ -199,6 +199,11 @@ export function AiView({ onNavigate }: { onNavigate: (view: ViewId) => void }) {
             </AnimatePresence>
             <div className="flex items-center gap-2 rounded-xl border border-white/8 bg-black/15 px-3 py-1.5 focus-within:border-[color-mix(in_srgb,var(--accent)_40%,transparent)]">
               <input ref={inputRef} value={draft} onChange={(e) => setDraft(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); submit(); } }} placeholder="Ask Nex anything…" className="min-w-0 flex-1 bg-transparent py-2 text-[13px] text-frost-100 outline-none placeholder:text-frost-600" />
+              {busy && (
+                <button onClick={stopSession} title="Stop the running session" aria-label="Stop Nex" className="flex h-8 shrink-0 items-center gap-1.5 rounded-lg bg-rose-500/15 px-2.5 text-[11px] font-semibold text-rose-300 ring-1 ring-rose-400/30 transition hover:bg-rose-500/25">
+                  <Square size={9} fill="currentColor" /> {stopRequested ? "Stopping…" : "Stop"}
+                </button>
+              )}
               <button onClick={submit} disabled={!draft.trim() || busy} className="grid h-8 w-8 shrink-0 place-items-center rounded-lg bg-accent text-white transition hover:brightness-110 disabled:cursor-not-allowed disabled:opacity-30" aria-label="Send to Nex"><Send size={14} /></button>
             </div>
           </div>

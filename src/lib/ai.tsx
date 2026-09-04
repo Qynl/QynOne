@@ -209,7 +209,7 @@ function buildSystemPrompt(memorySummary: string, engines: string[] = []): strin
     : "You have no long-term memory of this user yet. When they tell you something personal (a name, a favorite, a preference, an ongoing project), use the remember tool to save it.";
   const engineBlock =
     engines.length > 0
-      ? `\n- Autonomous build mode is active (connected: ${engines.join(", ")}). When the user gives you a development goal, treat it as a project you own: plan, build, test through the engine's own tools, inspect what you made, critically evaluate it, then improve and test again — without waiting for permission between steps. You have a generous step budget this session; use it. Multiple tool calls in one step run in parallel, so batch independent reads and edits together. Narrate your plan and reasoning in your reply text between tool steps — the user watches a live Agent Activity trace of your thoughts, tool calls and results. Only pause to ask when a decision genuinely cannot be inferred or would substantially change the result. Never stop at "a basic version works" when the request implies more; finish with what you completed, what you verified, and what you would improve next.`
+      ? `\n- Autonomous build mode is active (connected: ${engines.join(", ")}). When the user gives you a development goal, treat it as a project you own: plan, build, test through the engine's own tools, inspect what you made, critically evaluate it, then improve and test again — without waiting for permission between steps. You have a generous step budget this session; use it. Multiple tool calls in one step run in parallel, so batch independent reads and edits together. Narrate your plan and reasoning in your reply text between tool steps — the user watches a live Agent Activity trace of your thoughts, tool calls and results. The user can press Stop at any moment; if interrupted, acknowledge it, state exactly where you stopped and what remains, and never pretend unfinished work is done. Only pause to ask when a decision genuinely cannot be inferred or would substantially change the result. Never stop at "a basic version works" when the request implies more; finish with what you completed, what you verified, and what you would improve next.`
       : "";
   return `${systemPromptMd.trim()}\n\n---\n\n## Runtime context (refreshed on every request)\n\n- Today: ${now.toLocaleDateString(undefined, { weekday: "long", year: "numeric", month: "long", day: "numeric" })}. Current time: ${now.toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit" })}.\n- Vault budget: max ${VAULT_MAX_NOTES} notes, ${(NOTE_MAX_CHARS / 1000).toFixed(0)} KB per note. Memory file: ${MEMORY_PATH} (capped at ${(MEMORY_MAX_CHARS / 1000).toFixed(1)} KB).\n- Connected MCP engines right now: ${engines.length > 0 ? engines.join(", ") : "none — if the user asks for engine work (Roblox, Unreal, …), say you need the QynOne desktop app and the engine running with its MCP server enabled (Settings → Connections)."}${engineBlock}\n- ${memoryBlock}`;
 }
@@ -354,6 +354,34 @@ async function extractMemoryFacts(cfg: AiConfig, model: string, userText: string
 /* Activity helpers                                                    */
 /* ------------------------------------------------------------------ */
 
+/**
+ * Long engine results (a full script dump, a big scene tree, …) would bloat the
+ * context and slow every following step, so cap what the model actually sees.
+ * The head keeps the useful start, the tail preserves the end where errors
+ * usually live. Everything in the middle collapses into a short marker.
+ */
+const TOOL_RESULT_MAX = 12000;
+
+function clampToolResult(out: string): string {
+  if (out.length <= TOOL_RESULT_MAX) return out;
+  const head = Math.floor(TOOL_RESULT_MAX * 0.7);
+  const tail = TOOL_RESULT_MAX - head;
+  return `${out.slice(0, head)}\n\n[… ${out.length - TOOL_RESULT_MAX} characters omitted …]\n\n${out.slice(-tail)}`;
+}
+
+/**
+ * True only when the tool itself reported failure. Searching the whole result
+ * for the word "error" false-positives on scripts and scene data that merely
+ * contain the word; MCP errors are JSON objects with an error field, or the
+ * exact "MCP error" string the SDK throws.
+ */
+function toolResultFailed(out: string): boolean {
+  const head = out.slice(0, 400);
+  if (/^\s*\{[\s\S]*\berror\b/i.test(head)) return true; // {"error": …} — first bytes
+  if (/^\s*\{[\s\S]*\"isError\"\s*:\s*true/i.test(head)) return true;
+  return /^MCP error/i.test(head) || /^Error:/i.test(head);
+}
+
 /** Short human summary of a tool-call argument blob for the activity feed. */
 function summarizeArgs(rawArgs: string): string {
   try {
@@ -402,6 +430,10 @@ interface AiValue {
   /** How many tool calls completed in the current (or last) session. */
   toolCount: number;
   clearActivity: () => void;
+  /** Interrupt the running session as soon as the current step finishes. */
+  stopSession: () => void;
+  /** Whether the user asked to interrupt the session that is running now. */
+  stopRequested: boolean;
 }
 
 const AiContext = createContext<AiValue | null>(null);
@@ -440,6 +472,9 @@ export function AiProvider({
   const [sessionStart, setSessionStart] = useState<number | null>(null);
   const [toolCount, setToolCount] = useState(0);
   const [busy, setBusy] = useState(false);
+  const [stopRequested, setStopRequested] = useState(false);
+  const stopRef = useRef(false);
+  const sessionAbortRef = useRef<AbortController | null>(null);
   const [voiceEnabled, setVoiceEnabled] = useState(false);
   const [emotion, setEmotion] = useState<AiEmotion>("idle");
   const [config, setConfig] = useState<AiConfig>({ provider: "ollama", endpoint: "", model: "", key: "" });
@@ -512,6 +547,17 @@ export function AiProvider({
   const logActivity = useCallback((event: Omit<AgentEvent, "id" | "ts">) => {
     setActivity((a) => [...a, { ...event, id: uid(), ts: Date.now() }].slice(-400));
   }, []);
+
+  const stopSession = useCallback(() => {
+    stopRef.current = true;
+    setStopRequested(true);
+    logActivity({ kind: "phase", text: "Stop requested — finishing the current step, then wrapping up" });
+    /* An in-flight model call aborts right away so "Stop" feels instant even
+       when the model is streaming a long step. Tool calls already running in
+       the engines are allowed to settle (they can't be un-sent), but no new
+       step starts and Nex reports where it stopped. */
+    sessionAbortRef.current?.abort();
+  }, [logActivity]);
 
   const push = useCallback((role: "user" | "ai", text: string, tool?: string) => {
     setMessages((m) => [...m, { id: uid(), role, text, tool, ts: Date.now() }]);
@@ -1161,6 +1207,8 @@ export function AiProvider({
       const engineSession = engineTools.length > 0;
       announce(engineSession ? "*starting an autonomous build session*" : "*thinking about what you asked*", engineSession ? "working" : "thinking");
       setBusy(true);
+      setStopRequested(false);
+      stopRef.current = false;
       setEmotionFor(engineSession ? "working" : "thinking");
       setActivity([]);
       setToolCount(0);
@@ -1176,7 +1224,7 @@ export function AiProvider({
       const MAX_STEPS = engineSession ? 60 : 8;
       const SESSION_MS = 25 * 60_000;
       const STEP_MS = 180_000;
-      let stoppedEarly: "" | "time" | "steps" = "";
+      let stoppedEarly: "" | "time" | "steps" | "stop" = "";
       let toolsRun = 0;
 
       try {
@@ -1198,7 +1246,12 @@ export function AiProvider({
             stoppedEarly = "time";
             break;
           }
+          if (stopRef.current) {
+            stoppedEarly = "stop";
+            break;
+          }
           const controller = new AbortController();
+          sessionAbortRef.current = controller;
           const timeout = window.setTimeout(() => controller.abort(), STEP_MS);
           let res: ChatResult;
           try {
@@ -1255,11 +1308,12 @@ export function AiProvider({
           const settled = await Promise.all(runs.map((r) => r.run().then((out) => ({ r, out }))));
           for (const { r, out } of settled) {
             const ms = Date.now() - r.started;
-            const failed = /\berror\b/i.test(out.slice(0, 200));
+            const failed = toolResultFailed(out);
             toolsRun += 1;
             setToolCount((n) => n + 1);
             logActivity({ kind: "tool-end", text: r.label, engine: r.isEngine && r.label.includes(" · ") ? r.label.split(" · ")[0] : undefined, ok: !failed, detail: out.length > 240 ? `${out.slice(0, 240)}…` : out, ms });
-            msgs.push(r.tc.id ? { role: "tool", tool_call_id: r.tc.id, content: out } : { role: "tool", content: out });
+            const clamped = clampToolResult(out);
+            msgs.push(r.tc.id ? { role: "tool", tool_call_id: r.tc.id, content: clamped } : { role: "tool", content: clamped });
           }
         }
         if (stoppedEarly === "time") {
@@ -1268,6 +1322,9 @@ export function AiProvider({
         } else if (stoppedEarly === "steps") {
           finalText = `${finalText ? `${finalText.trim()}\n\n` : ""}I reached this session's step budget and paused. Say "continue" and I'll keep building from here.`;
           announce("*step budget reached — paused honestly*", "concerned");
+        } else if (stoppedEarly === "stop") {
+          finalText = `${finalText ? `${finalText.trim()}\n\n` : ""}Stopped, as you asked. Where I left off: ${toolsRun} tool call${toolsRun === 1 ? "" : "s"} done${finalText.trim() ? ` — ${finalText.trim()}` : ", before I wrote my summary."}`;
+          announce("*stopped — wrapping up*", "calm");
         }
         if (!finalText.trim()) finalText = "I couldn't produce an answer.";
         push("ai", finalText.trim());
@@ -1308,9 +1365,13 @@ export function AiProvider({
       } catch (e) {
         const err = e as Error;
         const isAbort = err.name === "AbortError";
+        const isStop = isAbort && stopRef.current;
         const isConn = /fetch|Failed to fetch|NetworkError|ECONNREFUSED/i.test(err.message);
         let reply: string;
-        if (isAbort) {
+        if (isStop) {
+          reply = `Stopped, as you asked — ${toolsRun} tool call${toolsRun === 1 ? "" : "s"} had run${toolsRun > 0 ? "; the results so far are safe in the engine" : ""}. Say "continue" whenever you want me to pick the work back up.`;
+          announce("*stopped — wrapping up*", "calm");
+        } else if (isAbort) {
           reply = "The model took too long — try again, or pick a smaller/faster model in Settings → AI.";
         } else if (isConn) {
           reply =
@@ -1328,7 +1389,7 @@ export function AiProvider({
         setBusy(false);
       }
     },
-    [announce, busy, compactMemory, memory, messages, push, setEmotionFor, tools, modelTools, engineTools, mcp, logActivity],
+    [announce, busy, compactMemory, memory, messages, push, setEmotionFor, tools, modelTools, engineTools, mcp, logActivity, stopSession],
   );
 
   useNexVoice({
@@ -1415,8 +1476,10 @@ export function AiProvider({
       sessionStart,
       toolCount,
       clearActivity,
+      stopSession,
+      stopRequested,
     }),
-    [messages, thoughts, busy, emotion, config, tools, send, clearChat, saveConfigCb, testConnection, compactMemory, setListening, setEmotionFor, announce, voiceEnabled, activity, sessionStart, toolCount, clearActivity],
+    [messages, thoughts, busy, emotion, config, tools, send, clearChat, saveConfigCb, testConnection, compactMemory, setListening, setEmotionFor, announce, voiceEnabled, activity, sessionStart, toolCount, clearActivity, stopSession, stopRequested],
   );
 
   return <AiContext.Provider value={value}>{children}</AiContext.Provider>;

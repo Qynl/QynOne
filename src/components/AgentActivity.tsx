@@ -1,5 +1,5 @@
 import { AnimatePresence, motion } from "framer-motion";
-import { Brain, Cable, CheckCircle2, Eraser, Layers, MessageSquareText, Play, Square, Terminal, Wrench, XCircle } from "lucide-react";
+import { Brain, Cable, CheckCircle2, Eraser, Layers, MessageSquareText, Play, Square, StopCircle, Terminal, Wrench, XCircle } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { AiFace } from "./AiFace";
 import { useAi } from "../lib/ai";
@@ -36,7 +36,7 @@ function elapsed(from: number): string {
  * the results and the phases of an autonomous build session.
  */
 export function AgentActivity({ onBack }: { onBack?: () => void }) {
-  const { activity, busy, emotion, sessionStart, toolCount, clearActivity, messages } = useAi();
+  const { activity, busy, emotion, sessionStart, toolCount, clearActivity, messages, stopSession, stopRequested } = useAi();
   const mcp = useMcp();
   const music = useMusic();
   const [autoScroll, setAutoScroll] = useState(true);
@@ -91,6 +91,11 @@ export function AgentActivity({ onBack }: { onBack?: () => void }) {
           {onBack && (
             <button onClick={onBack} className="glass-soft flex h-8 items-center gap-2 rounded-lg px-3 text-[11.5px] font-medium text-frost-300 transition hover:text-frost-100">
               <MessageSquareText size={12} /> Chat
+            </button>
+          )}
+          {busy && (
+            <button onClick={stopSession} title="Stop the running session — Nex finishes the current step, then wraps up" className={cn("flex h-8 items-center gap-1.5 rounded-lg px-3 text-[11.5px] font-semibold transition ring-1", stopRequested ? "bg-white/[0.04] text-frost-400 ring-white/10" : "bg-rose-500/15 text-rose-300 ring-rose-400/30 hover:bg-rose-500/25")}>
+              <StopCircle size={12} /> {stopRequested ? "Stopping…" : "Stop"}
             </button>
           )}
           {activity.length > 0 && (
