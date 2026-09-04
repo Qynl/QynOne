@@ -1,8 +1,8 @@
-version: 0.2.3
+version: 3.0.0-alpha
 files:
-  - url: QynOne-Setup-0.2.3-x64.exe
-    sha512: btaQcIz6NTUCL/psTm0/i/VlzhPd4rh1yP1e/0HA8RLlsZqd6ewoaRC28RUv9S89xrGgsFtdZMG8h0Lz6IApyA==
-    size: 114479597
-path: QynOne-Setup-0.2.3-x64.exe
-sha512: btaQcIz6NTUCL/psTm0/i/VlzhPd4rh1yP1e/0HA8RLlsZqd6ewoaRC28RUv9S89xrGgsFtdZMG8h0Lz6IApyA==
-releaseDate: '2026-09-04T15:00:49.119Z'
+  - url: QynOne-Setup-3.0.0-alpha-x64.exe
+    sha512: xdYrSUpQsjZTZEP0xqf8Zmackh862wqIiUoLV230+7gD/kq4KfX/toQFZV2mo9rxuZe/2Oygsd5N+0nB2J1Qaw==
+    size: 114479737
+path: QynOne-Setup-3.0.0-alpha-x64.exe
+sha512: xdYrSUpQsjZTZEP0xqf8Zmackh862wqIiUoLV230+7gD/kq4KfX/toQFZV2mo9rxuZe/2Oygsd5N+0nB2J1Qaw==
+releaseDate: '2026-09-04T15:15:35.770Z'

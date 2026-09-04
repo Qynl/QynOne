@@ -77,6 +77,12 @@ const MAX_NOTIFICATIONS = 30;
 
 export function QynProvider({ children }: { children: ReactNode }) {
   const [state, setState] = useState<QynState>(loadState);
+  /* Gate persistence until the initial desktop state has been read. Without
+     this, the very first render saves the seed state over the user's real
+     saved file before the async load finishes — a race that can wipe their
+     apps/folders/calendar on every launch. The web preview has no bridge,
+     so it is hydrated immediately. */
+  const [hydrated, setHydrated] = useState(() => !getDesktop());
 
   /* Desktop app: adopt the state saved on the user's PC (appears on mount). */
   useEffect(() => {
@@ -100,6 +106,9 @@ export function QynProvider({ children }: { children: ReactNode }) {
       })
       .catch(() => {
         // keep the in-memory state; persistence failures are non-fatal
+      })
+      .finally(() => {
+        if (alive) setHydrated(true);
       });
     return () => {
       alive = false;
@@ -108,6 +117,7 @@ export function QynProvider({ children }: { children: ReactNode }) {
 
   /* Persist: desktop writes to the per-user file, web keeps browser storage. */
   useEffect(() => {
+    if (!hydrated) return;
     const bridge = getDesktop();
     if (bridge) {
       bridge.saveState(state).catch(() => {});
@@ -118,7 +128,7 @@ export function QynProvider({ children }: { children: ReactNode }) {
     } catch {
       // storage unavailable — keep working in memory
     }
-  }, [state]);
+  }, [state, hydrated]);
 
   const actions = useMemo<AppActions>(() => {
     return {

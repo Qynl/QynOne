@@ -17,6 +17,7 @@ interface Toast {
   id: string;
   message: string;
   icon?: ReactNode;
+  duration: number;
 }
 
 interface UiApi {
@@ -57,7 +58,7 @@ export function UiProvider({ children }: { children: ReactNode }) {
     (message: string, opts?: { icon?: ReactNode; duration?: number }) => {
       const id = uid();
       const duration = opts?.duration ?? 2400;
-      setToasts((t) => [...t.slice(-3), { id, message, icon: opts?.icon }]);
+      setToasts((t) => [...t.slice(-3), { id, message, icon: opts?.icon, duration }]);
       timers.current.set(id, setTimeout(() => dismiss(id), duration));
     },
     [dismiss],
@@ -114,7 +115,7 @@ export function UiProvider({ children }: { children: ReactNode }) {
                   className="block h-full w-full bg-white/30"
                   initial={{ scaleX: 1 }}
                   animate={{ scaleX: 0 }}
-                  transition={{ duration: 2.4, ease: "linear" }}
+                  transition={{ duration: t.duration / 1000, ease: "linear" }}
                   style={{ transformOrigin: "left" }}
                 />
               </span>
@@ -194,7 +195,6 @@ export function useLaunch() {
   const { toast } = useUi();
   return useCallback(
     (app: AppItem) => {
-      actions.recordLaunch(app.id);
       const bridge = getDesktop();
 
       /* Desktop app: launch the real application through the OS shell. */
@@ -205,6 +205,9 @@ export function useLaunch() {
           });
           return;
         }
+        /* Only count a launch once it is actually being attempted — a failed
+           launch (no target) must not pollute "recently opened". */
+        actions.recordLaunch(app.id);
         toast(`Launching ${app.name}…`);
         bridge
           .launch(app.launchUri)
@@ -226,10 +229,13 @@ export function useLaunch() {
       }
 
       /* Web preview: open the target in a new tab. */
-      toast(`Launching ${app.name}…`);
-      if (app.launchUri) {
-        window.setTimeout(() => window.open(app.launchUri, "_blank", "noopener,noreferrer"), 350);
+      if (!app.launchUri) {
+        toast("This app has no launch target yet");
+        return;
       }
+      actions.recordLaunch(app.id);
+      toast(`Launching ${app.name}…`);
+      window.setTimeout(() => window.open(app.launchUri, "_blank", "noopener,noreferrer"), 350);
     },
     [actions, toast],
   );
