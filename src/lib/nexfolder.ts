@@ -125,6 +125,21 @@ export async function nexFolderRead(rel: string, withData = false): Promise<NexR
   }
 }
 
+/** Read a photo from the Nex folder as a data URL (used to send it to
+ *  the model as a real image when vision is enabled). */
+export async function nexFolderReadImage(rel: string): Promise<{ ok: boolean; dataUrl?: string; error?: string }> {
+  const b = bridge();
+  if (!b) return { ok: false, error: NO_DESKTOP };
+  try {
+    const r = await b.nexFolderRead(rel, true);
+    if (!r.ok) return { ok: false, error: r.error };
+    if (r.kind !== "image" || !r.dataUrl) return { ok: false, error: "not an image" };
+    return { ok: true, dataUrl: r.dataUrl };
+  } catch (e) {
+    return { ok: false, error: String((e as Error)?.message ?? e) };
+  }
+}
+
 export async function nexFolderWrite(rel: string, content: string): Promise<NexOpResult> {
   const b = bridge();
   if (!b) return { ok: false, error: NO_DESKTOP };

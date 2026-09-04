@@ -28,6 +28,7 @@ import type { McpServerConfig, McpServerStatus } from "../lib/desktop";
 import { MCP_PRESETS, useMcp } from "../lib/mcp";
 import type { McpPreset } from "../lib/mcp";
 import { useQyn } from "../lib/store";
+import { visionEnabled } from "../lib/vision";
 import { ACCENT_LIST, WALLPAPER_LIST } from "../lib/theme";
 import type { AccentId, QynState, ViewId, WallpaperId } from "../lib/types";
 import { cn, shade } from "../lib/utils";
@@ -551,6 +552,19 @@ function AiSettingsSection() {
             </div>
           </div>
         )}
+
+        {/* Vision — let Nex actually see screen captures and attached photos */}
+        <div className="flex items-center justify-between gap-3 rounded-xl border border-white/10 bg-white/[0.04] px-3.5 py-3">
+          <div className="min-w-0">
+            <p className="text-[12.5px] font-medium text-frost-100">Send screenshots &amp; photos to the model</p>
+            <p className="mt-0.5 text-[11px] leading-relaxed text-frost-500">
+              {config.provider === "ollama"
+                ? "Most local models are text-only, so this is off by default — turn it on for image-capable models (e.g. llava)."
+                : "On by default — Nex can see screen captures and attached photos. If a model rejects images, Nex retries without them automatically."}
+            </p>
+          </div>
+          <Toggle checked={visionEnabled(config)} onChange={(v) => void saveConfig({ ...config, vision: v })} />
+        </div>
       </div>
 
       {/* Test */}

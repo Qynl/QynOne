@@ -5,3 +5,8 @@ release/*
 !release/*.blockmap
 *.tsbuildinfo
 .DS_Store
+
+# Local credentials must never be committed
+.env
+.env.*
+!.env.example

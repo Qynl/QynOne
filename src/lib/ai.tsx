@@ -4,6 +4,7 @@ import { getDesktop, isFloatMode } from "./desktop";
 import type { AiConfig } from "./desktop";
 import { mcpFunctionName, useMcp } from "./mcp";
 import { NEX_MAX_MD, chatFileNameFor, describeEntry, fmtBytes, nexFolderDelete, nexFolderList, nexFolderRead, nexFolderReveal, nexFolderWrite } from "./nexfolder";
+import { apiContentFor, extractVisionData, hasImages, stripImagesFromMessages, VISION_MARKER, visionEnabled } from "./vision";
 import { useNexEmotions } from "./emotion";
 import type { EmotionDebug, NexEvent } from "./emotion";
 import { clearNowPlaying, playOnAmazonMusic, setNowPlaying } from "./music";
@@ -101,6 +102,8 @@ export interface AiAttachment {
   rel: string;
   name: string;
   kind: "md" | "text" | "image";
+  /** photos: in-memory data URL so the model can actually see them */
+  dataUrl?: string;
 }
 
 export interface AiMessage {
@@ -259,12 +262,21 @@ async function chatOnce(
       function: { name: t.name, description: t.description, parameters: t.parameters },
     }));
   }
-  const res = await fetch(`${endpoint}/chat/completions`, {
-    method: "POST",
-    headers,
-    body: JSON.stringify(body),
-    signal,
-  });
+  const sendMessages = (msgs: Array<Record<string, unknown>>) =>
+    fetch(`${endpoint}/chat/completions`, {
+      method: "POST",
+      headers,
+      body: JSON.stringify({ ...body, messages: msgs }),
+      signal,
+    });
+  /* Vision fallback: when the request carried images and the model rejects
+     them (text-only model, unsupported custom endpoint), retry once with
+     the images stripped so a screenshot never bricks the whole session. */
+  const hasImgs = hasImages(messages);
+  let res = await sendMessages(messages);
+  if (!res.ok && hasImgs && (res.status === 400 || res.status === 404 || res.status === 422 || res.status === 415)) {
+    res = await sendMessages(stripImagesFromMessages(messages));
+  }
   if (!res.ok) {
     const text = await res.text().catch(() => "");
     throw new Error(`API ${res.status}${text ? ` — ${text.slice(0, 160)}` : ""}`);
@@ -1169,7 +1181,10 @@ export function AiProvider({
           const cap = await bridge.captureScreen();
           if (!cap) return "I couldn't capture the screen right now.";
           const res = await bridge.saveScreenshot(cap);
-          return res.ok ? `Saved a screenshot${res.path ? ` to ${res.path}` : ""}.` : `Screenshot failed: ${res.error ?? "unknown error"}.`;
+          const saved = res.ok
+            ? `Saved a screenshot${res.path ? ` to ${res.path}` : ""}. `
+            : `Screen capture worked but saving to Pictures failed (${res.error ?? "unknown error"}). `;
+          return `${saved}${visionEnabled(configRef.current) ? "Here's what I see:\n" : ""}${VISION_MARKER}${cap}`;
         },
       },
       {
@@ -1459,7 +1474,8 @@ export function AiProvider({
             }
           }
           const result = await tool.run(args);
-          push("ai", result, toolName);
+          const visResult = extractVisionData(result);
+          push("ai", visResult ? visResult.text : result, toolName);
           announce(`*finished /${toolName}*`);
           react({ kind: "task-success", importance: "minor" });
         } catch (e) {
@@ -1548,7 +1564,8 @@ export function AiProvider({
           .slice(-12)
           .map((m) => ({ role: m.role, content: m.text }));
         const engines = mcp.servers.filter((s) => s.state === "connected").map((s) => s.name);
-        const userContent = attachedFiles.length > 0 ? buildFileAwarePrompt(text, attachedFiles) : text;
+        const baseContent = attachedFiles.length > 0 ? buildFileAwarePrompt(text, attachedFiles) : text;
+        const userContent = apiContentFor(baseContent, attachedFiles, visionEnabled(cfg));
         const resumeTail = isResume && resumeRef.current ? resumeRef.current : null;
         const msgs: Array<Record<string, unknown>> = resumeTail
           ? [
@@ -1581,6 +1598,7 @@ export function AiProvider({
         msgsForResume = msgs;
 
         let finalText = "";
+        let pendingVision: string | null = null;
         for (let step = 0; step < MAX_STEPS; step++) {
           if (Date.now() - sessionStart > SESSION_MS) {
             stoppedEarly = "time";
@@ -1653,8 +1671,23 @@ export function AiProvider({
             setToolCount((n) => n + 1);
             logActivity({ kind: "tool-end", text: r.label, engine: r.isEngine && r.label.includes(" · ") ? r.label.split(" · ")[0] : undefined, ok: !failed, detail: out.length > 240 ? `${out.slice(0, 240)}…` : out, ms });
             react({ kind: "tool-result", ok: !failed, engine: r.isEngine, important: IMPORTANT_TOOL_RE.test(r.tc.function.name) });
-            const clamped = clampToolResult(out);
+            const vis = extractVisionData(out);
+            const clamped = clampToolResult(vis ? vis.text : out);
             msgs.push(r.tc.id ? { role: "tool", tool_call_id: r.tc.id, content: clamped } : { role: "tool", content: clamped });
+            if (vis) pendingVision = vis.dataUrl;
+          }
+          /* Vision: the freshly captured screenshot rides into the next model
+             call as a real image part. Text-only models get it stripped by
+             chatOnce's fallback and never brick the session. */
+          if (pendingVision && visionEnabled(cfg)) {
+            msgs.push({
+              role: "user",
+              content: [
+                { type: "text", text: "[The latest screen capture — inspect it carefully before you continue.]" },
+                { type: "image_url", image_url: { url: pendingVision } },
+              ],
+            });
+            pendingVision = null;
           }
           /* Long sessions resend every accumulated tool result to the model on
              every step, so context grows without bound and each step gets

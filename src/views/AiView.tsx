@@ -9,7 +9,7 @@ import { useAi } from "../lib/ai";
 import type { AiAttachment } from "../lib/ai";
 import { CALM_BASE } from "../lib/emotion";
 import { getDesktop, isDesktop } from "../lib/desktop";
-import { nexFolderPickImport, nexFolderReveal } from "../lib/nexfolder";
+import { nexFolderPickImport, nexFolderReadImage, nexFolderReveal } from "../lib/nexfolder";
 import type { McpServerStatus } from "../lib/desktop";
 import { useMcp } from "../lib/mcp";
 import { useMusic } from "../lib/music";
@@ -109,9 +109,18 @@ export function AiView({ onNavigate }: { onNavigate: (view: ViewId) => void }) {
       }
       const imported = res.imported ?? [];
       if (imported.length > 0) {
+        /* Photos ride along as real images (data URLs) so Nex can actually
+           see them when vision is enabled in Settings → AI. */
+        const withData = await Promise.all(
+          imported.map(async (f) => {
+            if (f.kind !== "image") return f;
+            const img = await nexFolderReadImage(f.rel);
+            return img.ok && img.dataUrl ? { ...f, dataUrl: img.dataUrl } : f;
+          }),
+        );
         setPendingFiles((cur) => {
-          const seen = new Set(cur.map((f) => f.rel));
-          return [...cur, ...imported.filter((f) => !seen.has(f.rel))];
+          const seen = new Set(cur.map((x) => x.rel));
+          return [...cur, ...withData.filter((f) => !seen.has(f.rel))];
         });
       }
       const msgs = (res.errors ?? []).slice(0, 3).map((e) => `${e.name}: ${e.error}`);

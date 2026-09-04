@@ -56,6 +56,9 @@ export interface AiConfig {
   endpoint: string;
   model: string;
   key: string;
+  /** Send screenshots/photos to the model as real images (defaults by
+   *  provider when unset: on for OpenAI/custom, off for Ollama). */
+  vision?: boolean;
 }
 
 export type McpTransport = "stdio" | "http";
