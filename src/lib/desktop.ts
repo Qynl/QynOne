@@ -99,6 +99,74 @@ export interface McpTool {
   parameters: Record<string, unknown>;
 }
 
+/* ------------------------------------------------------------------ */
+/* Nex Folder — the ONE folder Nex may read and write.                 */
+/* Allowed inside: .md, plain-text & code files, and photos.            */
+/* ------------------------------------------------------------------ */
+
+export type NexEntryKind = "md" | "text" | "image" | "dir" | "other";
+
+export interface NexFolderInfo {
+  /** absolute path of the Nex folder */
+  root: string;
+  /** true when the user picked a custom folder instead of Documents\QynOneNex */
+  custom: boolean;
+  /** whether the folder exists on disk right now */
+  exists: boolean;
+}
+
+export interface NexFolderEntry {
+  name: string;
+  /** relative posix path inside the folder, e.g. "Briefs/Tactical.md" */
+  rel: string;
+  isDir: boolean;
+  kind: NexEntryKind;
+  /** Nex may read/write/delete this entry (md or image) */
+  allowed: boolean;
+  size: number;
+  mtimeMs: number;
+}
+
+export interface NexFolderList extends NexFolderInfo {
+  entries: NexFolderEntry[];
+}
+
+export interface NexReadResult {
+  ok: boolean;
+  error?: string;
+  kind?: "md" | "text" | "image";
+  name?: string;
+  rel?: string;
+  size?: number;
+  mime?: string;
+  /** .md and text/code files: the text */
+  content?: string;
+  /** photos: data URL, only when requested */
+  dataUrl?: string;
+}
+
+export interface NexOpResult {
+  ok: boolean;
+  error?: string;
+  rel?: string;
+  canceled?: boolean;
+}
+
+export interface NexPickImportFile {
+  /** relative path inside the folder, e.g. "Chat/MyBrief.md" */
+  rel: string;
+  name: string;
+  kind: "md" | "text" | "image";
+}
+
+export interface NexPickImportResult {
+  ok: boolean;
+  canceled?: boolean;
+  error?: string;
+  imported?: NexPickImportFile[];
+  errors?: { name: string; error: string }[];
+}
+
 export interface DesktopBridge {
   platform: string;
   loadState: () => Promise<QynState | null>;
@@ -125,6 +193,20 @@ export interface DesktopBridge {
   vaultMkdir: (rel: string) => Promise<{ ok: boolean; error?: string }>;
   /** Subscribe to vault folder changes (auto-rescan). Returns an unsubscribe fn. */
   onVaultChanged: (cb: () => void) => () => void;
+
+  /* Nex Folder — the single sandboxed folder Nex may read and write.
+     Allowed inside: .md, text/code files and photos. */
+  nexFolderInfo: () => Promise<NexFolderInfo>;
+  nexFolderList: () => Promise<NexFolderList>;
+  nexFolderRead: (rel: string, withData?: boolean) => Promise<NexReadResult>;
+  nexFolderWrite: (rel: string, content: string) => Promise<NexOpResult>;
+  nexFolderDelete: (rel: string) => Promise<NexOpResult>;
+  nexFolderImport: (rel: string, dataUrl: string) => Promise<NexOpResult>;
+  nexFolderChoose: () => Promise<NexOpResult & NexFolderInfo>;
+  nexFolderReset: () => Promise<NexOpResult & NexFolderInfo>;
+  nexFolderReveal: (rel?: string) => Promise<{ ok: boolean; error?: string }>;
+  /** One OS picker → validated copies land in Chat/ inside the Nex folder. */
+  nexFolderPickImport: () => Promise<NexPickImportResult>;
 
   /* AI configuration — qynone.env in the user data folder */
   aiConfigGet: () => Promise<AiConfig | null>;

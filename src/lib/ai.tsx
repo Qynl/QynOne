@@ -3,6 +3,7 @@ import type { ReactNode } from "react";
 import { getDesktop, isFloatMode } from "./desktop";
 import type { AiConfig } from "./desktop";
 import { mcpFunctionName, useMcp } from "./mcp";
+import { NEX_MAX_MD, chatFileNameFor, describeEntry, fmtBytes, nexFolderDelete, nexFolderList, nexFolderRead, nexFolderReveal, nexFolderWrite } from "./nexfolder";
 import { useNexEmotions } from "./emotion";
 import type { EmotionDebug, NexEvent } from "./emotion";
 import { clearNowPlaying, playOnAmazonMusic, setNowPlaying } from "./music";
@@ -95,11 +96,20 @@ export type AiEmotion =
   | "protective"
   | "settled";
 
+export interface AiAttachment {
+  /** relative path inside the Nex Folder, e.g. "Chat/MyBrief.md" */
+  rel: string;
+  name: string;
+  kind: "md" | "text" | "image";
+}
+
 export interface AiMessage {
   id: string;
   role: "user" | "ai";
   text: string;
   tool?: string;
+  /** files attached to a user message (stored in the Nex Folder) */
+  files?: AiAttachment[];
   ts: number;
 }
 
@@ -409,6 +419,46 @@ function summarizeArgs(rawArgs: string): string {
 export interface SendOptions {
   /** spoken out loud via the voice interface */
   voice?: boolean;
+  /** files attached to this message — already imported into the Nex Folder */
+  files?: AiAttachment[];
+}
+
+/* ------------------------------------------------------------------ */
+/* Chat files — long pastes and attachments become files in the Nex    */
+/* Folder (Chat/) so the model never swallows giant user messages and  */
+/* the work stays available for the whole job.                         */
+/* ------------------------------------------------------------------ */
+
+const LONG_TEXT_CHARS = 5000;
+const RESUME_RE = /^(?:continue|keep (?:going|building|working)|resume|pick (?:it|this|things?) up|go on|carry on|weiter|mach weiter|weiter (?:machen|bauen))\b/i;
+
+const FILE_KIND_LABEL: Record<AiAttachment["kind"], string> = {
+  md: "markdown",
+  text: "text/code",
+  image: "photo",
+};
+
+/** The user message the model sees when files ride along. */
+function buildFileAwarePrompt(text: string, files: AiAttachment[]): string {
+  const lines = [
+    "The user attached file(s) from your Nex Folder — READ THEM BEFORE YOU ACT by calling your nex-folder tools (list/read). Their contents are part of the request, and they stay in the folder for the whole job so you can re-read or update them.",
+    ...files.map((f) => `- ${f.rel} (${FILE_KIND_LABEL[f.kind] ?? f.kind})`),
+    "",
+    text.trim() || "(No message — the attached files are the whole request.)",
+  ];
+  return lines.join("\n");
+}
+
+/** Save an oversized pasted message as .md in the folder; null when it can't. */
+async function saveChatTextAsMd(raw: string): Promise<AiAttachment | null> {
+  try {
+    const rel = chatFileNameFor(raw);
+    const res = await nexFolderWrite(rel, raw);
+    if (!res.ok) return null;
+    return { rel, name: rel.split("/").pop() ?? rel, kind: "md" };
+  } catch {
+    return null;
+  }
 }
 
 interface AiValue {
@@ -496,6 +546,10 @@ export function AiProvider({
   const milestonesRef = useRef<string[]>([]);
   const issuesRef = useRef<string[]>([]);
   const sessionAbortRef = useRef<AbortController | null>(null);
+  /* When a long build stops early, its agent conversation is kept so a
+     "continue" picks up exactly where it stopped — with the plan,
+     milestones and open review issues intact instead of a cold restart. */
+  const resumeRef = useRef<Array<Record<string, unknown>> | null>(null);
   const [voiceEnabled, setVoiceEnabled] = useState(false);
   const [config, setConfig] = useState<AiConfig>({ provider: "ollama", endpoint: "", model: "", key: "" });
   const configRef = useRef(config);
@@ -582,8 +636,8 @@ export function AiProvider({
     sessionAbortRef.current?.abort();
   }, [logActivity]);
 
-  const push = useCallback((role: "user" | "ai", text: string, tool?: string) => {
-    setMessages((m) => [...m, { id: uid(), role, text, tool, ts: Date.now() }]);
+  const push = useCallback((role: "user" | "ai", text: string, tool?: string, files?: AiAttachment[]) => {
+    setMessages((m) => [...m, { id: uid(), role, text, tool, files: files && files.length > 0 ? files : undefined, ts: Date.now() }]);
   }, []);
 
   /* ------------------------------------------------------------------ */
@@ -1210,6 +1264,102 @@ export function AiProvider({
           return `Self-review #${count} recorded: quality ${quality}/10 — this is NOT good enough to finish yet. Your own issues: ${issues.length ? issues.join("; ") : "(none listed)"}. Next up, in order: ${next.length ? next.join(" → ") : "fix the issues above"}. Continue working: address them, test again in the engine, then call self-review again. The user wants a real, polished, fun game — not a demo.`;
         },
       },
+      {
+        name: "nex-folder-list",
+        usage: "/nex-folder-list",
+        description:
+          "List everything in the user's Nex Folder — the ONE folder that belongs to you, holding .md briefs, text/code files and photos the user dropped there. Call this first whenever the user says to work with the folder, a brief, or a dropped file: see what is there before reading anything.",
+        parameters: { type: "object", properties: {} },
+        run: async () => {
+          const list = await nexFolderList();
+          if (!list) return "The Nex Folder lives in the QynOne desktop app — it isn't available in this preview.";
+          if (!list.exists) return "The Nex Folder hasn't been created yet. Ask the user to open the Nex Folder tab in the AI view and click the create button — it takes one click, then they can drop files in.";
+          if (list.entries.length === 0) return `The Nex Folder (${list.root}) is empty — ask the user to drop in .md briefs, text/code files or photos first.`;
+          const dirs = list.entries.filter((e) => e.isDir);
+          const files = list.entries.filter((e) => !e.isDir && e.allowed);
+          const ignored = list.entries.filter((e) => !e.isDir && !e.allowed).length;
+          const lines = [...dirs.map((d) => `📁 ${d.rel}/ (folder)`), ...files.map((f) => `📄 ${describeEntry(f)}`)];
+          if (lines.length === 0) lines.push("(nothing Nex can use — every file in the folder is an unsupported type)");
+          return [`Nex Folder (${list.root}):`, ...lines, ignored > 0 ? `Note: ${ignored} other file${ignored === 1 ? "" : "s"} in the folder are unsupported types — those are off-limits.` : ""].filter(Boolean).join("\n");
+        },
+      },
+      {
+        name: "nex-folder-read",
+        usage: "/nex-folder-read <relative path>",
+        description:
+          "Read a file from the Nex Folder by its relative path (e.g. Briefs/TacticalShooter.md, Chat/code.lua or idea.md — nex-folder-list shows exact names). .md and text/code files come back as full text — follow them as requirements; photos open for the user instead. When the user says to work from the folder, read the relevant files BEFORE you act; re-read after edits when they changed.",
+        parameters: {
+          type: "object",
+          properties: { path: { type: "string", description: "relative path of the .md file inside the Nex Folder" } },
+          required: ["path"],
+        },
+        run: async (args) => {
+          const path = String(args.path ?? "").trim();
+          if (!path) return "Which file? Pass its relative path — nex-folder-list shows the exact names.";
+          const res = await nexFolderRead(path);
+          if (!res.ok) return res.error ?? "Couldn't read that file.";
+          if (res.kind === "image") {
+            return `“${res.name}” is a photo (${fmtBytes(res.size ?? 0)}). You can't analyze image content yet, so open it for the user with nex-folder-open and ask them what matters about it — or work from a .md brief instead.`;
+          }
+          const content = (res.content ?? "").trim();
+          if (!content) return `“${res.name}” is empty.`;
+          return `── ${res.name} · ${fmtBytes(res.size ?? 0)} ──\n${content}`;
+        },
+      },
+      {
+        name: "nex-folder-write",
+        usage: "/nex-folder-write <relative path> <content>",
+        description:
+          "Create or update a .md file inside the Nex Folder. Use it to write your plan and spec before a build from a brief, to log progress, to save decisions, or to leave the user a summary of what you built and verified. The path is relative (missing subfolders are created automatically). Only .md and text/code files can be written (photos are added by you) — put the full content in the content argument.",
+        parameters: {
+          type: "object",
+          properties: {
+            path: { type: "string", description: "relative path ending in .md, e.g. Plans/MyGame.md" },
+            content: { type: "string", description: "the full Markdown content to write" },
+          },
+          required: ["path", "content"],
+        },
+        run: async (args) => {
+          const path = String(args.path ?? "").trim();
+          const content = String(args.content ?? "");
+          if (!path) return "Which file? Pass a relative path ending in .md.";
+          const res = await nexFolderWrite(path, content.length > NEX_MAX_MD ? content.slice(0, NEX_MAX_MD) : content);
+          return res.ok ? `Wrote ${path} in the Nex Folder.` : res.error ?? "Couldn't write that file.";
+        },
+      },
+      {
+        name: "nex-folder-delete",
+        usage: "/nex-folder-delete <relative path>",
+        description:
+          "Delete a .md file, text/code file or photo from the Nex Folder by relative path (only files you created or that the user gave you — subfolders themselves can't be deleted this way). Deleting is permanent, so confirm with the user before removing something they deposited.",
+        parameters: {
+          type: "object",
+          properties: { path: { type: "string", description: "relative path of the file to delete" } },
+          required: ["path"],
+        },
+        run: async (args) => {
+          const path = String(args.path ?? "").trim();
+          if (!path) return "Which file? Pass its relative path.";
+          const res = await nexFolderDelete(path);
+          return res.ok ? `Deleted ${path} from the Nex Folder.` : res.error ?? "Couldn't delete that file.";
+        },
+      },
+      {
+        name: "nex-folder-open",
+        usage: "/nex-folder-open <relative path>",
+        description:
+          "Open a file or folder from the Nex Folder on the user's screen — photos open in their photo viewer, .md files open in the editor, a folder path opens in Explorer. Use this when the user needs to look at a photo or file themselves (you can't see image content).",
+        parameters: {
+          type: "object",
+          properties: { path: { type: "string", description: "relative path of the file or folder to open (omit to open the folder itself)" } },
+          required: [],
+        },
+        run: async (args) => {
+          const path = String(args.path ?? "").trim();
+          const res = await nexFolderReveal(path || undefined);
+          return res.ok ? (path ? `Opened ${path} for the user.` : "Opened the Nex Folder in Explorer.") : res.error ?? "Couldn't open that.";
+        },
+      },
     ];
   }, [state, vault, memory, launch, onNavigate, onOpenFolder, onOpenNote, actions, logActivity]);
 
@@ -1239,9 +1389,10 @@ export function AiProvider({
 
   const send = useCallback(
     async (rawText: string, opts?: SendOptions) => {
-      const text = rawText.trim();
+      let text = rawText.trim();
       if (!text || busy) return;
       const viaVoice = Boolean(opts?.voice);
+      const attachedFiles: AiAttachment[] = [...(opts?.files ?? [])];
       announce(viaVoice ? "*listening to you*" : "*receiving a new request*", "attentive");
 
       /* Slash commands — direct tool use. */
@@ -1271,7 +1422,7 @@ export function AiProvider({
               args = JSON.parse(remainder);
             } catch {
               const first = Object.keys(tool.parameters.properties ?? {})[0];
-              args = first === "query" || first === "name" || first === "view" ? { [first]: remainder } : { query: remainder };
+              args = first === "query" || first === "name" || first === "view" || first === "path" ? { [first]: remainder } : { query: remainder };
             }
           }
           const result = await tool.run(args);
@@ -1304,24 +1455,45 @@ export function AiProvider({
         return;
       }
 
-      push("user", text);
+      /* Long pastes become .md files in the Nex Folder (Chat/) instead of
+         giant chat messages — the file becomes the message, and Nex reads
+         it through its folder tools. Falls back to inline text when the
+         folder is unreachable (web preview). */
+      if (attachedFiles.length === 0 && !viaVoice && text.length > LONG_TEXT_CHARS && text.length <= NEX_MAX_MD - 2048) {
+        const saved = await saveChatTextAsMd(text);
+        if (saved) {
+          const originalLen = text.length;
+          attachedFiles.push(saved);
+          text = `I pasted a long text (${originalLen.toLocaleString()} characters) — I saved it as ${saved.rel} in the Nex Folder. Read it with your nex-folder tools and work from it.`;
+        }
+      }
+      const isResume = !viaVoice && resumeRef.current !== null && resumeRef.current.length > 0 && RESUME_RE.test(text);
+      push("user", text, undefined, attachedFiles.length > 0 ? attachedFiles : undefined);
       const engineSession = engineTools.length > 0;
-      announce(engineSession ? "*starting an autonomous build session*" : "*thinking about what you asked*");
+      announce(engineSession ? (isResume ? "*resuming the build session*" : "*starting an autonomous build session*") : "*thinking about what you asked*");
       setBusy(true);
       setStopRequested(false);
       stopRef.current = false;
-      reviewCountRef.current = 0;
-      goalRef.current = text;
-      planRef.current = "";
-      milestonesRef.current = [];
-      issuesRef.current = [];
+      if (!isResume) {
+        reviewCountRef.current = 0;
+        goalRef.current = text.trim() || (attachedFiles.length > 0 ? `Work from the attached file(s): ${attachedFiles.map((f) => f.rel).join(", ")}` : "");
+        planRef.current = "";
+        milestonesRef.current = [];
+        issuesRef.current = [];
+        resumeRef.current = null;
+      }
       react({ kind: "task-start", task: engineSession ? "build" : "chat" });
       setActivity([]);
       setToolCount(0);
       setSessionStart(Date.now());
       const connectedEngines = mcp.servers.filter((s) => s.state === "connected").map((s) => s.name);
       if (engineSession) {
-        logActivity({ kind: "phase", text: `Session started — ${connectedEngines.length} engine${connectedEngines.length === 1 ? "" : "s"} connected (${connectedEngines.join(", ") || "none"}), autonomous mode on` });
+        logActivity({
+          kind: "phase",
+          text: isResume
+            ? "Session resumed — picking up the previous build with its goal, plan, milestones and open issues intact"
+            : `Session started — ${connectedEngines.length} engine${connectedEngines.length === 1 ? "" : "s"} connected (${connectedEngines.join(", ") || "none"}), autonomous mode on`,
+        });
       }
       /* Engine builds run long: a generous per-model-call timeout and a big
          step budget (each tool result feeds the next decision), guarded by
@@ -1340,11 +1512,19 @@ export function AiProvider({
           .slice(-12)
           .map((m) => ({ role: m.role, content: m.text }));
         const engines = mcp.servers.filter((s) => s.state === "connected").map((s) => s.name);
-        const msgs: Array<Record<string, unknown>> = [
-          { role: "system", content: buildSystemPrompt(memory.summary, engines) },
-          ...history,
-          { role: "user", content: text },
-        ];
+        const userContent = attachedFiles.length > 0 ? buildFileAwarePrompt(text, attachedFiles) : text;
+        const resumeTail = isResume && resumeRef.current ? resumeRef.current : null;
+        const msgs: Array<Record<string, unknown>> = resumeTail
+          ? [
+              { role: "system", content: buildSystemPrompt(memory.summary, engines) },
+              ...resumeTail,
+              { role: "user", content: userContent },
+            ]
+          : [
+              { role: "system", content: buildSystemPrompt(memory.summary, engines) },
+              ...history,
+              { role: "user", content: userContent },
+            ];
         /* Live build-state digest — a compact always-current block (goal, plan,
            milestones, open review issues) re-inserted after every step so the
            model always knows what it built, even 80 steps in. */
@@ -1459,6 +1639,15 @@ export function AiProvider({
           finalText = `${finalText ? `${finalText.trim()}\n\n` : ""}Stopped, as you asked. Where I left off: ${toolsRun} tool call${toolsRun === 1 ? "" : "s"} done${finalText.trim() ? ` — ${finalText.trim()}` : ", before I wrote my summary."}`;
           announce("*stopped — wrapping up*");
           react({ kind: "stopped" });
+        }
+        /* A session that stopped early keeps its conversation so the next
+           "continue" resumes it; a session that ran to completion is done. */
+        if (stoppedEarly) {
+          resumeRef.current = msgs
+            .filter((m) => !String(m.content ?? "").startsWith("__QYN_STATE__"))
+            .slice(-44);
+        } else {
+          resumeRef.current = null;
         }
         if (!finalText.trim()) finalText = "I couldn't produce an answer.";
         push("ai", finalText.trim());

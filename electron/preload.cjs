@@ -49,6 +49,19 @@ contextBridge.exposeInMainWorld("qynDesktop", {
     return () => ipcRenderer.removeListener("qyn:vault-changed", listener);
   },
 
+  /* Nex Folder — the single sandboxed folder Nex may read and write.
+     Allowed inside: .md, text/code files and photos. */
+  nexFolderInfo: () => ipcRenderer.invoke("qyn:nex-folder-info"),
+  nexFolderList: () => ipcRenderer.invoke("qyn:nex-folder-list"),
+  nexFolderRead: (rel, withData) => ipcRenderer.invoke("qyn:nex-folder-read", rel, Boolean(withData)),
+  nexFolderWrite: (rel, content) => ipcRenderer.invoke("qyn:nex-folder-write", rel, content),
+  nexFolderDelete: (rel) => ipcRenderer.invoke("qyn:nex-folder-delete", rel),
+  nexFolderImport: (rel, dataUrl) => ipcRenderer.invoke("qyn:nex-folder-import", rel, dataUrl),
+  nexFolderChoose: () => ipcRenderer.invoke("qyn:nex-folder-choose"),
+  nexFolderReset: () => ipcRenderer.invoke("qyn:nex-folder-reset"),
+  nexFolderReveal: (rel) => ipcRenderer.invoke("qyn:nex-folder-reveal", rel ?? ""),
+  nexFolderPickImport: () => ipcRenderer.invoke("qyn:nex-folder-pick-import"),
+
   /* AI configuration — qynone.env in the user data folder */
   aiConfigGet: () => ipcRenderer.invoke("qyn:ai-config-get"),
   aiConfigSet: (cfg) => ipcRenderer.invoke("qyn:ai-config-set", cfg),

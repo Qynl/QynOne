@@ -1,12 +1,15 @@
 import { AnimatePresence, motion } from "framer-motion";
-import { Activity, ArrowRight, Bot, Cable, ChevronRight, Command, PictureInPicture2, Plug, Plus, Send, Sparkles, Square, Wrench } from "lucide-react";
+import { Activity, ArrowRight, Bot, Cable, ChevronRight, Command, ExternalLink, FileText, FolderOpen, Image as ImageIcon, Loader2, Paperclip, PictureInPicture2, Plug, Plus, Send, Sparkles, Square, Wrench, X } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { AgentActivity, AgentActivityMini } from "../components/AgentActivity";
 import { AiFace } from "../components/AiFace";
 import { EmotionDebugger } from "../components/EmotionDebugger";
+import { NexFolderPanel } from "../components/NexFolderPanel";
 import { useAi } from "../lib/ai";
+import type { AiAttachment } from "../lib/ai";
 import { CALM_BASE } from "../lib/emotion";
 import { getDesktop, isDesktop } from "../lib/desktop";
+import { nexFolderPickImport, nexFolderReveal } from "../lib/nexfolder";
 import type { McpServerStatus } from "../lib/desktop";
 import { useMcp } from "../lib/mcp";
 import { useMusic } from "../lib/music";
@@ -25,8 +28,11 @@ export function AiView({ onNavigate }: { onNavigate: (view: ViewId) => void }) {
   const mcp = useMcp();
   const music = useMusic();
   const [draft, setDraft] = useState("");
+  const [pendingFiles, setPendingFiles] = useState<AiAttachment[]>([]);
+  const [picking, setPicking] = useState(false);
+  const [attachNote, setAttachNote] = useState<string | null>(null);
   const [floating, setFloating] = useState(false);
-  const [tab, setTab] = useState<"chat" | "activity">("chat");
+  const [tab, setTab] = useState<"chat" | "activity" | "folder">("chat");
   const inputRef = useRef<HTMLInputElement>(null);
   const endRef = useRef<HTMLDivElement>(null);
   const showTools = draft.startsWith("/");
@@ -78,13 +84,55 @@ export function AiView({ onNavigate }: { onNavigate: (view: ViewId) => void }) {
 
   const submit = () => {
     const text = draft.trim();
-    if (!text || busy) return;
+    if ((!text && pendingFiles.length === 0) || busy) return;
     setDraft("");
-    void send(text);
+    const files = pendingFiles;
+    setPendingFiles([]);
+    void send(text, { files: files.length > 0 ? files : undefined });
+  };
+
+  /* OS file picker → copies of the chosen files land in NexFolder/Chat/,
+     then ride along with the next message as chips. Only .md, text/code
+     and photos are accepted (the main process enforces this too). */
+  const attachFiles = async () => {
+    if (!isDesktop() || busy || picking) return;
+    setPicking(true);
+    setAttachNote(null);
+    try {
+      const res = await nexFolderPickImport();
+      if (res.canceled) return;
+      if (!res.ok) {
+        const msg = res.error ?? "Couldn't attach files.";
+        setAttachNote(msg);
+        window.setTimeout(() => setAttachNote((cur) => (cur === msg ? null : cur)), 6000);
+        return;
+      }
+      const imported = res.imported ?? [];
+      if (imported.length > 0) {
+        setPendingFiles((cur) => {
+          const seen = new Set(cur.map((f) => f.rel));
+          return [...cur, ...imported.filter((f) => !seen.has(f.rel))];
+        });
+      }
+      const msgs = (res.errors ?? []).slice(0, 3).map((e) => `${e.name}: ${e.error}`);
+      const note = msgs.length > 0 ? msgs.join(" · ") : imported.length === 0 ? "No files were sent." : null;
+      if (note) {
+        setAttachNote(note);
+        window.setTimeout(() => setAttachNote((cur) => (cur === note ? null : cur)), 6000);
+      }
+    } catch {
+      setAttachNote("Couldn't open the file picker.");
+    } finally {
+      setPicking(false);
+    }
   };
 
   if (tab === "activity") {
     return <AgentActivity onBack={() => setTab("chat")} />;
+  }
+
+  if (tab === "folder") {
+    return <NexFolderPanel onBack={() => setTab("chat")} />;
   }
 
   return (
@@ -105,6 +153,13 @@ export function AiView({ onNavigate }: { onNavigate: (view: ViewId) => void }) {
           >
             <Activity size={13} className="text-accent" /> Agent Activity
             {busy && activity.length > 0 && <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-accent shadow-[0_0_8px_var(--accent-glow)]" />}
+          </button>
+          <button
+            onClick={() => setTab("folder")}
+            className="glass-soft flex h-8 items-center gap-2 rounded-lg px-3 text-[11.5px] font-medium text-frost-300 transition hover:border-accent-soft hover:text-frost-100"
+            title="The one folder Nex can read and write — deposit .md briefs and photos, then tell Nex to work with them"
+          >
+            <FolderOpen size={13} className="text-accent" /> Nex Folder
           </button>
           <button onClick={() => onNavigate("vault")} className="glass-soft flex h-8 items-center gap-2 rounded-lg px-3 text-[11.5px] font-medium text-frost-300 transition hover:text-frost-100">
             <Command size={13} className="text-accent" /> Open Vault <ArrowRight size={12} />
@@ -177,6 +232,23 @@ export function AiView({ onNavigate }: { onNavigate: (view: ViewId) => void }) {
                 <div className={cn("max-w-[82%] rounded-2xl px-3.5 py-2.5 text-[13px] leading-relaxed", message.role === "user" ? "rounded-br-md bg-accent-soft text-frost-100" : "rounded-bl-md bg-white/[0.045] text-frost-200")}>
                   {message.text.split("\n").map((line, i) => <p key={i}>{line || "\u00a0"}</p>)}
                   {message.tool && <p className="mt-1 text-[10px] text-accent/80">/{message.tool}</p>}
+                  {message.role === "user" && message.files && message.files.length > 0 && (
+                    <div className="mt-1.5 flex flex-wrap gap-1">
+                      {message.files.map((f) => (
+                        <button
+                          key={f.rel}
+                          onClick={() => {
+                            if (isDesktop()) void nexFolderReveal(f.rel);
+                          }}
+                          title="Click to open on your screen — the file stays in the Nex Folder"
+                          className="flex max-w-[220px] items-center gap-1 rounded-md bg-black/20 px-1.5 py-0.5 text-[10px] text-frost-200 ring-1 ring-white/10 transition hover:ring-accent-soft"
+                        >
+                          {f.kind === "image" ? <ImageIcon size={10} className="shrink-0 text-emerald-300/90" /> : <FileText size={10} className="shrink-0 text-sky-300/90" />}
+                          <span className="truncate">{f.name}</span>
+                        </button>
+                      ))}
+                    </div>
+                  )}
                 </div>
               </motion.div>
             ))}
@@ -199,14 +271,44 @@ export function AiView({ onNavigate }: { onNavigate: (view: ViewId) => void }) {
                 </motion.div>
               )}
             </AnimatePresence>
+            {pendingFiles.length > 0 && (
+              <div className="mb-2 flex flex-wrap items-center gap-1.5">
+                {pendingFiles.map((f) => (
+                  <span key={f.rel} className="glass-soft flex max-w-[260px] items-center gap-1.5 rounded-lg px-2 py-1 text-[10.5px] text-frost-200">
+                    {f.kind === "image" ? <ImageIcon size={11} className="shrink-0 text-emerald-300/90" /> : <FileText size={11} className="shrink-0 text-sky-300/90" />}
+                    <span className="truncate">{f.name}</span>
+                    {isDesktop() && (
+                      <button onClick={() => void nexFolderReveal(f.rel)} title="Open on your screen" className="grid h-4 w-4 shrink-0 place-items-center rounded text-frost-500 transition hover:bg-white/10 hover:text-frost-100">
+                        <ExternalLink size={10} />
+                      </button>
+                    )}
+                    <button onClick={() => setPendingFiles((cur) => cur.filter((x) => x.rel !== f.rel))} title="Remove from this message (the file stays in the Nex Folder)" className="grid h-4 w-4 shrink-0 place-items-center rounded text-frost-500 transition hover:bg-rose-500/20 hover:text-rose-300">
+                      <X size={10} />
+                    </button>
+                  </span>
+                ))}
+              </div>
+            )}
+            {attachNote && <p className="mb-2 text-[10.5px] leading-relaxed text-amber-200/85">{attachNote}</p>}
             <div className="flex items-center gap-2 rounded-xl border border-white/8 bg-black/15 px-3 py-1.5 focus-within:border-[color-mix(in_srgb,var(--accent)_40%,transparent)]">
+              {isDesktop() && (
+                <button
+                  onClick={() => void attachFiles()}
+                  disabled={busy || picking}
+                  title="Send files to Nex — .md, text/code and photos are copied into the Nex Folder and Nex reads them"
+                  aria-label="Attach files"
+                  className="grid h-8 w-8 shrink-0 place-items-center rounded-lg text-frost-400 transition hover:bg-white/6 hover:text-frost-100 disabled:cursor-not-allowed disabled:opacity-30"
+                >
+                  {picking ? <Loader2 size={14} className="animate-spin" /> : <Paperclip size={14} />}
+                </button>
+              )}
               <input ref={inputRef} value={draft} onChange={(e) => setDraft(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); submit(); } }} placeholder="Ask Nex anything…" className="min-w-0 flex-1 bg-transparent py-2 text-[13px] text-frost-100 outline-none placeholder:text-frost-600" />
               {busy && (
                 <button onClick={stopSession} title="Stop the running session" aria-label="Stop Nex" className="flex h-8 shrink-0 items-center gap-1.5 rounded-lg bg-rose-500/15 px-2.5 text-[11px] font-semibold text-rose-300 ring-1 ring-rose-400/30 transition hover:bg-rose-500/25">
                   <Square size={9} fill="currentColor" /> {stopRequested ? "Stopping…" : "Stop"}
                 </button>
               )}
-              <button onClick={submit} disabled={!draft.trim() || busy} className="grid h-8 w-8 shrink-0 place-items-center rounded-lg bg-accent text-white transition hover:brightness-110 disabled:cursor-not-allowed disabled:opacity-30" aria-label="Send to Nex"><Send size={14} /></button>
+              <button onClick={submit} disabled={(!draft.trim() && pendingFiles.length === 0) || busy} className="grid h-8 w-8 shrink-0 place-items-center rounded-lg bg-accent text-white transition hover:brightness-110 disabled:cursor-not-allowed disabled:opacity-30" aria-label="Send to Nex"><Send size={14} /></button>
             </div>
           </div>
         </section>

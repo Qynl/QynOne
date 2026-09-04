@@ -14,7 +14,7 @@
  *    or touches the real applications on the PC.
  */
 
-const { app, BrowserWindow, ipcMain, shell, screen } = require("electron");
+const { app, BrowserWindow, dialog, ipcMain, shell, screen } = require("electron");
 const fs = require("node:fs");
 const os = require("node:os");
 const fsPromises = require("node:fs/promises");
@@ -617,6 +617,364 @@ ipcMain.handle("qyn:vault-mkdir", async (_event, rel) => {
   } catch (e) {
     return { ok: false, error: String((e && e.message) || e) };
   }
+});
+
+/* ------------------------------------------------------------------ */
+/* Nex Folder — the ONE folder that belongs to Nex.                    */
+/*                                                                     */
+/* The user deposits briefs (.md), text/code files and photos there and  */
+/* asks Nex to work from them. Nex may freely read, create, edit and     */
+/* delete files INSIDE this folder — but only .md, text/code and image   */
+/* files, and only within this root. Every handler re-validates the      */
+/* file extension, so no tool can reach outside or touch other types.   */
+/* ------------------------------------------------------------------ */
+
+const NEX_MD_EXT = [".md", ".markdown"];
+const NEX_IMAGE_MIME = {
+  ".png": "image/png",
+  ".jpg": "image/jpeg",
+  ".jpeg": "image/jpeg",
+  ".gif": "image/gif",
+  ".webp": "image/webp",
+  ".bmp": "image/bmp",
+};
+const NEX_IMAGE_LIMIT = 20 * 1024 * 1024; // 20 MB per photo
+const NEX_MD_LIMIT = 500 * 1024; // 500 KB per text file (.md and text/code)
+/* Plain-text & code types Nex may read/write/deposit — the user chose to
+   open the folder beyond .md. Keep in sync with src/lib/nexfolder.ts. */
+const NEX_TEXT_EXT = [
+  ".txt", ".log", ".json", ".csv", ".xml", ".yaml", ".yml", ".ini", ".cfg", ".toml",
+  ".lua", ".py", ".js", ".jsx", ".ts", ".tsx", ".css", ".html", ".htm",
+  ".c", ".h", ".cpp", ".cc", ".hpp", ".cs", ".java", ".go", ".rs", ".rb", ".php",
+  ".sql", ".sh", ".bat", ".ps1", ".glsl", ".vert", ".frag", ".hlsl",
+];
+
+function nexConfigFile() {
+  return path.join(app.getPath("userData"), "qynone-nex.json");
+}
+
+function nexDefaultRoot() {
+  return path.join(app.getPath("documents"), "QynOneNex");
+}
+
+async function nexConfiguredPath() {
+  try {
+    const raw = await fsPromises.readFile(nexConfigFile(), "utf8");
+    const parsed = JSON.parse(raw);
+    if (parsed && typeof parsed.path === "string" && parsed.path.trim()) return parsed.path.trim();
+  } catch {
+    // no config yet — default folder
+  }
+  return nexDefaultRoot();
+}
+
+async function nexSavePath(p) {
+  const file = nexConfigFile();
+  await fsPromises.mkdir(path.dirname(file), { recursive: true });
+  await fsPromises.writeFile(file, JSON.stringify({ path: p }, null, 2), "utf8");
+}
+
+/** "md" | "image" | "other" — what Nex is allowed to touch. */
+function nexKindOf(name) {
+  const lower = String(name).toLowerCase();
+  if (NEX_MD_EXT.some((e) => lower.endsWith(e))) return "md";
+  if (NEX_TEXT_EXT.some((e) => lower.endsWith(e))) return "text";
+  if (Object.prototype.hasOwnProperty.call(NEX_IMAGE_MIME, lower.slice(lower.lastIndexOf(".")))) return "image";
+  return "other";
+}
+
+/** Normalize a tool/UI-supplied relative path into safe posix segments. */
+function nexSanitizeRel(raw) {
+  if (typeof raw !== "string" || !raw.trim()) return null;
+  const segs = String(raw)
+    .split(/[\\/]/)
+    .map((s) => s.trim())
+    .filter(Boolean)
+    .filter((s) => s !== "." && s !== "..");
+  if (segs.length === 0 || segs.length > 4) return null;
+  if (segs.some((s) => s.length > 120 || /[<>:"|?*\u0000-\u001f]/.test(s) || s.startsWith("."))) return null;
+  return segs.join("/");
+}
+
+/** Resolve a sanitized relative path and make sure it stays inside the root. */
+async function nexResolve(rel) {
+  const clean = nexSanitizeRel(rel);
+  if (!clean) return { error: "invalid path" };
+  const root = path.resolve(await nexConfiguredPath());
+  const full = path.resolve(root, clean);
+  if (full !== root && !full.startsWith(root + path.sep)) return { error: "path escapes the Nex folder" };
+  return { root, full, rel: clean };
+}
+
+function nexEntry(root, rel, name, entry, st) {
+  const kind = entry.isDirectory() ? "dir" : nexKindOf(name);
+  return {
+    name,
+    rel,
+    isDir: entry.isDirectory(),
+    kind,
+    allowed: kind === "md" || kind === "image",
+    size: entry.isDirectory() ? 0 : st.size,
+    mtimeMs: st.mtimeMs,
+  };
+}
+
+function nexWalk(dir, root, base, entries, depth) {
+  if (depth > 3 || entries.length >= 800) return;
+  let list;
+  try {
+    list = fs.readdirSync(dir, { withFileTypes: true });
+  } catch {
+    return;
+  }
+  for (const entry of list) {
+    if (entries.length >= 800) return;
+    if (entry.name.startsWith(".")) continue;
+    const full = path.join(dir, entry.name);
+    const rel = base ? `${base}/${entry.name}` : entry.name;
+    try {
+      const st = fs.statSync(full);
+      entries.push(nexEntry(root, rel, entry.name, entry, st));
+      if (entry.isDirectory()) nexWalk(full, root, rel, entries, depth + 1);
+    } catch {
+      // skip unreadable entries
+    }
+  }
+}
+
+async function nexInfo() {
+  const root = await nexConfiguredPath();
+  const custom = path.resolve(root) !== path.resolve(nexDefaultRoot());
+  let exists = false;
+  try {
+    exists = (await fsPromises.stat(root)).isDirectory();
+  } catch {
+    exists = false;
+  }
+  return { root, custom, exists };
+}
+
+async function nexEnsureRoot() {
+  const root = path.resolve(await nexConfiguredPath());
+  await fsPromises.mkdir(root, { recursive: true });
+  return root;
+}
+
+ipcMain.handle("qyn:nex-folder-info", async () => nexInfo());
+
+ipcMain.handle("qyn:nex-folder-list", async () => {
+  const info = await nexInfo();
+  const entries = [];
+  if (info.exists) {
+    const root = path.resolve(info.root);
+    nexWalk(root, root, "", entries, 0);
+    entries.sort((a, b) => (a.isDir === b.isDir ? a.name.localeCompare(b.name) : a.isDir ? -1 : 1));
+  }
+  return { ...info, entries };
+});
+
+ipcMain.handle("qyn:nex-folder-read", async (_event, rel, withData) => {
+  const resolved = await nexResolve(rel);
+  if (resolved.error) return { ok: false, error: resolved.error };
+  const { root, full } = resolved;
+  const name = path.basename(full);
+  const kind = nexKindOf(name);
+  if (kind === "other") return { ok: false, error: "only .md, text/code and photo files can be read from the Nex folder" };
+  try {
+    const st = await fsPromises.stat(full);
+    if (!st.isFile()) return { ok: false, error: "not a file" };
+    if (kind === "md" || kind === "text") {
+      if (st.size > NEX_MD_LIMIT) return { ok: false, error: "that file is too large to read here" };
+      const content = await fsPromises.readFile(full, "utf8");
+      return { ok: true, kind, name, rel: resolved.rel, size: st.size, content };
+    }
+    if (st.size > NEX_IMAGE_LIMIT) return { ok: false, error: "that photo is too large to read here" };
+    const buf = await fsPromises.readFile(full);
+    const ext = name.slice(name.lastIndexOf(".")).toLowerCase();
+    const mime = NEX_IMAGE_MIME[ext] || "application/octet-stream";
+    const result = { ok: true, kind: "image", name, rel: resolved.rel, size: st.size, mime };
+    if (withData) result.dataUrl = `data:${mime};base64,${buf.toString("base64")}`;
+    return result;
+  } catch (e) {
+    return { ok: false, error: String((e && e.message) || e) };
+  }
+});
+
+ipcMain.handle("qyn:nex-folder-write", async (_event, rel, content) => {
+  if (typeof content !== "string") return { ok: false, error: "invalid content" };
+  if (content.length > NEX_MD_LIMIT) return { ok: false, error: "that .md file is too large to write" };
+  const resolved = await nexResolve(rel);
+  if (resolved.error) return { ok: false, error: resolved.error };
+  const kind = nexKindOf(path.basename(resolved.full));
+  if (kind !== "md" && kind !== "text")
+    return { ok: false, error: "Nex can only write .md and text/code files into the folder — photos are added by you." };
+  try {
+    await nexEnsureRoot();
+    await fsPromises.mkdir(path.dirname(resolved.full), { recursive: true });
+    await fsPromises.writeFile(resolved.full, content, "utf8");
+    return { ok: true, rel: resolved.rel };
+  } catch (e) {
+    return { ok: false, error: String((e && e.message) || e) };
+  }
+});
+
+ipcMain.handle("qyn:nex-folder-delete", async (_event, rel) => {
+  const resolved = await nexResolve(rel);
+  if (resolved.error) return { ok: false, error: resolved.error };
+  const kind = nexKindOf(path.basename(resolved.full));
+  if (kind === "other") return { ok: false, error: "only .md, text/code and photo files in the Nex folder can be deleted" };
+  try {
+    const st = await fsPromises.stat(resolved.full);
+    if (st.isDirectory()) return { ok: false, error: "folders themselves are managed by you in Explorer — Nex can delete files inside them." };
+    await fsPromises.rm(resolved.full);
+    return { ok: true, rel: resolved.rel };
+  } catch (e) {
+    return { ok: false, error: String((e && e.message) || e) };
+  }
+});
+
+ipcMain.handle("qyn:nex-folder-import", async (_event, rel, dataUrl) => {
+  const clean = nexSanitizeRel(rel);
+  if (!clean) return { ok: false, error: "invalid file name" };
+  const m = /^data:([^;,]+)?(;base64)?,(.*)$/s.exec(String(dataUrl || ""));
+  if (!m) return { ok: false, error: "invalid file data" };
+  const buf = Buffer.from(m[3], "base64");
+  const name = clean.split("/").pop();
+  const kind = nexKindOf(name);
+  if (kind === "md" || kind === "text") {
+    if (buf.length > NEX_MD_LIMIT) return { ok: false, error: "that file is too large" };
+  } else if (kind === "image") {
+    if (buf.length > NEX_IMAGE_LIMIT) return { ok: false, error: "that photo is too large (max 20 MB)" };
+    const mediaType = String(m[1] || "").toLowerCase();
+    const ext = name.slice(name.lastIndexOf(".")).toLowerCase();
+    const expected = NEX_IMAGE_MIME[ext];
+    if (mediaType && expected && mediaType !== expected && !mediaType.startsWith("image/")) {
+      return { ok: false, error: "file content does not match its extension" };
+    }
+  } else {
+    return { ok: false, error: "Only .md, text/code and photo files (png, jpg, jpeg, gif, webp, bmp) can be deposited into the Nex folder." };
+  }
+  try {
+    const root = await nexEnsureRoot();
+    const full = path.resolve(root, clean);
+    if (full !== root && !full.startsWith(root + path.sep)) return { ok: false, error: "path escapes the Nex folder" };
+    await fsPromises.mkdir(path.dirname(full), { recursive: true });
+    await fsPromises.writeFile(full, kind === "image" ? buf : buf.toString("utf8"));
+    return { ok: true, rel: clean };
+  } catch (e) {
+    return { ok: false, error: String((e && e.message) || e) };
+  }
+});
+
+/* Chat attachments — one OS dialog, then every chosen file is validated
+   against the same rules and copied into Chat/ inside the Nex folder.
+   Everything stays confined to the root; only allowed types are copied. */
+const NEX_DIALOG_EXTS = [
+  ...new Set([
+    ...NEX_MD_EXT.map((e) => e.replace(/^\./, "")),
+    ...NEX_TEXT_EXT.map((e) => e.replace(/^\./, "")),
+    ...Object.keys(NEX_IMAGE_MIME).map((e) => e.replace(/^\./, "")),
+  ]),
+];
+
+function nexUniqueChatName(root, name) {
+  const ext = path.extname(name);
+  const base = name.slice(0, name.length - ext.length);
+  let candidate = name;
+  let n = 2;
+  while (fs.existsSync(path.join(root, "Chat", candidate))) {
+    candidate = `${base} (${n})${ext}`;
+    n += 1;
+    if (n > 99) break;
+  }
+  return candidate;
+}
+
+ipcMain.handle("qyn:nex-folder-pick-import", async () => {
+  const options = {
+    title: "Send files to Nex",
+    buttonLabel: "Send to the Nex Folder",
+    properties: ["openFile", "multiSelections"],
+    filters: [{ name: "Nex files (.md, text & code, photos)", extensions: NEX_DIALOG_EXTS }],
+  };
+  const win = mainWindow && !mainWindow.isDestroyed() ? mainWindow : null;
+  const result = win ? await dialog.showOpenDialog(win, options) : await dialog.showOpenDialog(options);
+  if (result.canceled || result.filePaths.length === 0) return { ok: true, canceled: true, imported: [], errors: [] };
+  let root;
+  try {
+    root = await nexEnsureRoot();
+  } catch (e) {
+    return { ok: false, error: String((e && e.message) || e), imported: [], errors: [] };
+  }
+  const imported = [];
+  const errors = [];
+  for (const filePath of result.filePaths) {
+    const name = path.basename(filePath);
+    const kind = nexKindOf(name);
+    if (kind === "other" || name.startsWith(".")) {
+      errors.push({ name, error: "Only .md, text/code and photo files can be sent — this type isn't allowed in the Nex Folder." });
+      continue;
+    }
+    try {
+      const buf = await fsPromises.readFile(filePath);
+      if ((kind === "md" || kind === "text") && buf.length > NEX_MD_LIMIT) {
+        errors.push({ name, error: "too large (max 500 KB)" });
+        continue;
+      }
+      if (kind === "image" && buf.length > NEX_IMAGE_LIMIT) {
+        errors.push({ name, error: "too large (max 20 MB)" });
+        continue;
+      }
+      const chatDir = path.join(root, "Chat");
+      await fsPromises.mkdir(chatDir, { recursive: true });
+      const targetName = nexUniqueChatName(root, name);
+      await fsPromises.writeFile(path.join(chatDir, targetName), kind === "image" ? buf : buf.toString("utf8"));
+      imported.push({ rel: `Chat/${targetName}`, name: targetName, kind });
+    } catch (e) {
+      errors.push({ name, error: String((e && e.message) || e) });
+    }
+  }
+  return { ok: true, imported, errors };
+});
+
+ipcMain.handle("qyn:nex-folder-choose", async () => {
+  const options = {
+    title: "Choose the one Nex folder",
+    properties: ["openDirectory", "createDirectory"],
+    message: "Nex gets read/write/delete access to this folder and ONLY this folder — limited to .md, text/code and photo files.",
+  };
+  const win = mainWindow && !mainWindow.isDestroyed() ? mainWindow : null;
+  const result = win ? await dialog.showOpenDialog(win, options) : await dialog.showOpenDialog(options);
+  if (result.canceled || result.filePaths.length === 0) return { ok: false, canceled: true, ...(await nexInfo()) };
+  try {
+    const chosen = path.resolve(result.filePaths[0]);
+    await nexSavePath(chosen);
+    await nexEnsureRoot();
+    return { ok: true, ...(await nexInfo()) };
+  } catch (e) {
+    return { ok: false, error: String((e && e.message) || e), ...(await nexInfo()) };
+  }
+});
+
+ipcMain.handle("qyn:nex-folder-reset", async () => {
+  try {
+    await nexSavePath(nexDefaultRoot());
+    await nexEnsureRoot();
+    return { ok: true, ...(await nexInfo()) };
+  } catch (e) {
+    return { ok: false, error: String((e && e.message) || e), ...(await nexInfo()) };
+  }
+});
+
+ipcMain.handle("qyn:nex-folder-reveal", async (_event, rel) => {
+  if (!rel) {
+    const info = await nexInfo();
+    if (!info.exists) await nexEnsureRoot();
+    return openPath(info.root);
+  }
+  const resolved = await nexResolve(rel);
+  if (resolved.error) return { ok: false, error: resolved.error };
+  return openPath(resolved.full);
 });
 
 /* ------------------------------------------------------------------ */
