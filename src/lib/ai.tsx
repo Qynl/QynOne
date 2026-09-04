@@ -211,7 +211,7 @@ function buildSystemPrompt(memorySummary: string, engines: string[] = []): strin
     : "You have no long-term memory of this user yet. When they tell you something personal (a name, a favorite, a preference, an ongoing project), use the remember tool to save it.";
   const engineBlock =
     engines.length > 0
-      ? `\n- Autonomous build mode is active (connected: ${engines.join(", ")}). When the user gives you a development goal, treat it as a project you own: plan, build, test through the engine's own tools, inspect what you made, critically evaluate it, then improve and test again — without waiting for permission between steps. You have a generous step budget this session; use it. Multiple tool calls in one step run in parallel, so batch independent reads and edits together. Narrate your plan and reasoning in your reply text between tool steps — the user watches a live Agent Activity trace of your thoughts, tool calls and results. The user can press Stop at any moment; if interrupted, acknowledge it, state exactly where you stopped and what remains, and never pretend unfinished work is done. Only pause to ask when a decision genuinely cannot be inferred or would substantially change the result. Never stop at "a basic version works" when the request implies more. Before finishing, run /self-review and iterate until the quality score is honestly good; then finish with what you completed, what you verified, and what you would improve next.`
+      ? `\n- Autonomous build mode is active (connected: ${engines.join(", ")}). When the user gives you a development goal, treat it as a project you own: plan, build, test through the engine's own tools, inspect what you made, critically evaluate it, then improve and test again — without waiting for permission between steps. You have a generous step budget this session; use it. Multiple tool calls in one step run in parallel, so batch independent reads and edits together. Narrate your plan and reasoning in your reply text between tool steps — the user watches a live Agent Activity trace of your thoughts, tool calls and results. The user can press Stop at any moment; if interrupted, acknowledge it, state exactly where you stopped and what remains, and never pretend unfinished work is done. Only pause to ask when a decision genuinely cannot be inferred or would substantially change the result. Never stop at "a basic version works" when the request implies more. Before finishing, run /self-review and keep iterating until the quality score is honestly excellent. If a decision would substantially change the result (genre, art style, core mechanic, scope), ask the user one short specific question and wait for the answer — better one good question than a wrong guess. Then finish with what you completed, what you verified, and what you would improve next.`
       : "";
   return `${systemPromptMd.trim()}\n\n---\n\n## Runtime context (refreshed on every request)\n\n- Today: ${now.toLocaleDateString(undefined, { weekday: "long", year: "numeric", month: "long", day: "numeric" })}. Current time: ${now.toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit" })}.\n- Vault budget: max ${VAULT_MAX_NOTES} notes, ${(NOTE_MAX_CHARS / 1000).toFixed(0)} KB per note. Memory file: ${MEMORY_PATH} (capped at ${(MEMORY_MAX_CHARS / 1000).toFixed(1)} KB).\n- Connected MCP engines right now: ${engines.length > 0 ? engines.join(", ") : "none — if the user asks for engine work (Roblox, Unreal, …), say you need the QynOne desktop app and the engine running with its MCP server enabled (Settings → Connections)."}${engineBlock}\n- ${memoryBlock}`;
 }
@@ -342,7 +342,7 @@ const TOOL_RESULT_MAX = 12000;
 
 /** Engine tools whose outcome matters enough to feel — builds, tests, runs,
     reviews. */
-const IMPORTANT_TOOL_RE = /(build|compile|playtest|publish|generate|test|execute|run|create|insert|script|review)/i;
+const IMPORTANT_TOOL_RE = /(build|compile|playtest|publish|generate|test|execute|run|create|insert|script|review|milestone|plan)/i;
 
 function clampToolResult(out: string): string {
   if (out.length <= TOOL_RESULT_MAX) return out;
@@ -489,6 +489,12 @@ export function AiProvider({
   /* how many times Nex has self-reviewed a build in the current session —
      bounds the quality loop so it can't spin forever */
   const reviewCountRef = useRef(0);
+  /* live build-state digest: goal, plan, milestones and open issues feed a
+     compact always-current block every step so long builds stay coherent */
+  const goalRef = useRef("");
+  const planRef = useRef("");
+  const milestonesRef = useRef<string[]>([]);
+  const issuesRef = useRef<string[]>([]);
   const sessionAbortRef = useRef<AbortController | null>(null);
   const [voiceEnabled, setVoiceEnabled] = useState(false);
   const [config, setConfig] = useState<AiConfig>({ provider: "ollama", endpoint: "", model: "", key: "" });
@@ -1126,16 +1132,57 @@ export function AiProvider({
         },
       },
       {
+        name: "plan",
+        usage: "/plan",
+        description:
+          "Record or update your plan for the current build. Call this early for any big goal (games, levels, systems) — the goal and steps go into a live build-state digest that refreshes every step, so you never drift from the plan on long sessions.",
+        parameters: {
+          type: "object",
+          properties: {
+            goal: { type: "string", description: "What you are building, in one line." },
+            steps: { type: "array", items: { type: "string" }, description: "The ordered plan — systems, maps, assets, polish phases — under 12 steps." },
+          },
+          required: ["goal", "steps"],
+        },
+        run: (args) => {
+          const goal = String(args.goal ?? "").trim().slice(0, 220);
+          const steps = Array.isArray(args.steps) ? args.steps.map(String).filter(Boolean).slice(0, 12) : [];
+          planRef.current = goal ? `${goal} — ${steps.join(" → ")}`.slice(0, 700) : steps.join(" → ");
+          logActivity({ kind: "phase", text: `Plan: ${planRef.current.slice(0, 220)}` });
+          return `Plan recorded and live in the build-state digest: ${planRef.current}`;
+        },
+      },
+      {
+        name: "milestone",
+        usage: "/milestone",
+        description:
+          "Record a completed milestone: what you built, where (paths or instances), and how you verified it. The live build-state digest carries it forward, so you never lose track of your own work on long builds. Call this after every significant chunk.",
+        parameters: {
+          type: "object",
+          properties: {
+            note: { type: "string", description: "Short milestone: what you built, where, and how you verified it. Under 160 characters." },
+          },
+          required: ["note"],
+        },
+        run: (args) => {
+          const note = String(args.note ?? "").trim().slice(0, 180);
+          if (!note) return "No milestone recorded — send a note.";
+          milestonesRef.current = [...milestonesRef.current, note].slice(-16);
+          logActivity({ kind: "phase", text: `Milestone: ${note}` });
+          return "Milestone recorded — the live build-state digest now includes it.";
+        },
+      },
+      {
         name: "self-review",
         usage: "/self-review",
         description:
-          "Critically evaluate the work you just built in the connected engine before you finish. Call this whenever you complete a significant chunk of work or before writing your final summary: is the result actually good enough for what the user asked? Be honest — a low score means you keep improving, it never means you give up.",
+          "Critically evaluate the work you just built in the connected engine before you finish. Call this whenever you complete a significant chunk of work or before writing your final summary: The bar is EXTREMELY high: quality means a game people actually want — fun, polished, good-looking and stable — not merely one that works. Score 9-10 only when you would proudly ship it; 7-8 means functional but not good enough (keep improving); below 7 means clearly unfinished. Be brutally honest — a low score never means you give up, it means you keep working until it's genuinely great.",
         parameters: {
           type: "object",
           properties: {
             work: { type: "string", description: "What you built and tested so far, 1-3 sentences." },
-            quality: { type: "number", description: "Honest 1-10 score: how close is the result to the user's goal?" },
-            issues: { type: "array", items: { type: "string" }, description: "Concrete problems or gaps you found — 1-5 items." },
+            quality: { type: "number", description: "Honest 1-10 score: how close is the result to a game people would actually enjoy? 9-10 = fun, polished, good-looking, stable. 7-8 = works but not shippable." },
+            issues: { type: "array", items: { type: "string" }, description: "Concrete problems or gaps you found, especially gameplay feel, visuals, polish and stability — 1-5 items." },
             next: { type: "array", items: { type: "string" }, description: "What you will improve next, in order of impact." },
           },
           required: ["work", "quality", "issues"],
@@ -1146,17 +1193,21 @@ export function AiProvider({
           const next = Array.isArray(args.next) ? args.next.map(String).filter(Boolean).slice(0, 4) : [];
           reviewCountRef.current += 1;
           const count = reviewCountRef.current;
+          issuesRef.current = issues;
           logActivity({
             kind: "phase",
             text: `Self-review #${count}: quality ${quality}/10${issues.length ? ` — ${issues.join("; ")}` : ""}`,
           });
-          if (quality >= 8) {
-            return `Self-review recorded: quality ${quality}/10. Good enough to wrap up.${issues.length ? ` Keep in mind: ${issues.join("; ")}.` : ""} Write your final summary now: what you built, what you verified through the engine, and what you'd improve with more time.`;
+          if (quality >= 9) {
+            return `Self-review recorded: quality ${quality}/10 — genuinely good.${issues.length ? ` Small notes: ${issues.join("; ")}.` : ""} Do one last quick check (run the game, look at the screen, read the console), then write your final summary: what you built, what you verified through the engine, and what you'd improve with more time.`;
           }
-          if (count >= 4) {
-            return `Self-review #${count} recorded: quality ${quality}/10. The session's review budget is spent, so fix the single most important issue${issues.length ? ` (${issues[0]})` : ""}, test once more, then write your final honest summary — including what remains.`;
+          if (quality === 8) {
+            return `Self-review recorded: quality 8/10 — very close, but not at the bar yet.${issues.length ? ` Polish these: ${issues.join("; ")}.` : " Find the biggest remaining rough edge and fix it."} One decisive polish pass (feel, visuals, stability), test once more, then re-review. The user wants top quality, not almost.`;
           }
-          return `Self-review #${count} recorded: quality ${quality}/10 — this is NOT good enough to finish yet. Your own issues: ${issues.length ? issues.join("; ") : "(none listed)"}. Next up, in order: ${next.length ? next.join(" → ") : "fix the issues above"}. Continue working: address them, test again in the engine, then call self-review again. The user wants the real thing, not a demo.`;
+          if (count >= 5) {
+            return `Self-review #${count} recorded: quality ${quality}/10. The session's review budget is spent, so fix the single most important issue${issues.length ? ` (${issues[0]})` : ""}, test once more, then write your final honest summary — including exactly what remains below the quality bar.`;
+          }
+          return `Self-review #${count} recorded: quality ${quality}/10 — this is NOT good enough to finish yet. Your own issues: ${issues.length ? issues.join("; ") : "(none listed)"}. Next up, in order: ${next.length ? next.join(" → ") : "fix the issues above"}. Continue working: address them, test again in the engine, then call self-review again. The user wants a real, polished, fun game — not a demo.`;
         },
       },
     ];
@@ -1260,6 +1311,10 @@ export function AiProvider({
       setStopRequested(false);
       stopRef.current = false;
       reviewCountRef.current = 0;
+      goalRef.current = text;
+      planRef.current = "";
+      milestonesRef.current = [];
+      issuesRef.current = [];
       react({ kind: "task-start", task: engineSession ? "build" : "chat" });
       setActivity([]);
       setToolCount(0);
@@ -1272,7 +1327,7 @@ export function AiProvider({
          step budget (each tool result feeds the next decision), guarded by
          an overall session cap so Nex always comes back with a report. */
       const sessionStart = Date.now();
-      const MAX_STEPS = engineSession ? 60 : 8;
+      const MAX_STEPS = engineSession ? 90 : 8;
       const SESSION_MS = 25 * 60_000;
       const STEP_MS = 180_000;
       let stoppedEarly: "" | "time" | "steps" | "stop" = "";
@@ -1290,6 +1345,23 @@ export function AiProvider({
           ...history,
           { role: "user", content: text },
         ];
+        /* Live build-state digest — a compact always-current block (goal, plan,
+           milestones, open review issues) re-inserted after every step so the
+           model always knows what it built, even 80 steps in. */
+        const upsertStateDigest = (msgsArr: Array<Record<string, unknown>>) => {
+          for (let i = msgsArr.length - 1; i >= 1; i--) {
+            if (String(msgsArr[i].content ?? "").startsWith("__QYN_STATE__")) msgsArr.splice(i, 1);
+          }
+          const digest = [
+            "__QYN_STATE__ — live build state, always current. Read it every step.",
+            `Goal: ${goalRef.current || "—"}`,
+            `Plan: ${planRef.current || "not recorded yet — call the plan tool early"}`,
+            `Completed milestones: ${milestonesRef.current.length > 0 ? milestonesRef.current.slice(-12).join(" | ") : "none yet"}`,
+            `Open issues from your last self-review: ${issuesRef.current.length > 0 ? issuesRef.current.join("; ") : "none"}`,
+          ].join("\n");
+          msgsArr.splice(1, 0, { role: "user", content: digest });
+        };
+        upsertStateDigest(msgs);
 
         let finalText = "";
         for (let step = 0; step < MAX_STEPS; step++) {
@@ -1373,6 +1445,7 @@ export function AiProvider({
              but are compressed in place to a small digest — the model keeps
              reading recent results in full and only sees the gist of old ones. */
           compressOldToolResults(msgs, 6);
+          upsertStateDigest(msgs);
         }
         if (stoppedEarly === "time") {
           finalText = `${finalText ? `${finalText.trim()}\n\n` : ""}I hit this session's work-time limit, so I stopped here — ask me to continue and I'll pick up where I left off.`;
