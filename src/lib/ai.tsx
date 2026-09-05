@@ -20,6 +20,8 @@ import { MEMORY_COMPACT_AT, MEMORY_MAX_CHARS, NOTE_MAX_CHARS, VAULT_MAX_NOTES } 
 import { runVaultTidy, vaultUsage } from "./vaultMaintain";
 import { dateKey, eventSortKey, fmtTime, parseTime, relativeDay, todayKey, uid } from "./utils";
 import { speak, stopSpeaking, useNexVoice } from "./speech";
+import { DEFAULT_GATE, currentPhase, gdaDigest, gdaFinish, gdaRecordBlocker, gdaStart, gdaStatusText, gdaSubmitReview, phaseDirective } from "./gamedev";
+import type { GdaScope, GdaState, QualityReport } from "./gamedev";
 
 /* ------------------------------------------------------------------ */
 /* Types                                                               */
@@ -457,6 +459,16 @@ function summarizeArgs(rawArgs: string): string {
   }
 }
 
+/* GDA score helpers — quality scores are always clamped 0-100. */
+function gdaNum(v: unknown, fallback: number): number {
+  const n = Number(v);
+  return Number.isFinite(n) ? Math.max(0, Math.min(100, Math.round(n))) : fallback;
+}
+
+function gdaStrs(v: unknown, cap = 8): string[] {
+  return Array.isArray(v) ? v.map(String).map((s) => s.trim()).filter(Boolean).slice(0, cap) : [];
+}
+
 /* ------------------------------------------------------------------ */
 /* Context                                                             */
 /* ------------------------------------------------------------------ */
@@ -526,6 +538,8 @@ interface AiValue {
   setVoiceEnabled: (enabled: boolean) => void;
   /** Live agent trace: thoughts, tool calls, results, phases — newest last. */
   activity: AgentEvent[];
+  /** Staged game-dev pipeline state — null when no pipeline is running. */
+  gda: GdaState | null;
   /** When the current (or last) agent session started; null before any run. */
   sessionStart: number | null;
   /** How many tool calls completed in the current (or last) session. */
@@ -566,6 +580,9 @@ export function AiProvider({
 
   const statsRef = useRef({ stats, sys });
   statsRef.current = { stats, sys };
+  /* Live names of the connected engines, read by the gda-start tool. */
+  const connectedEnginesRef = useRef<string[]>([]);
+  connectedEnginesRef.current = mcp.servers.filter((s) => s.state === "connected").map((s) => s.name);
 
   const [messages, setMessages] = useState<AiMessage[]>([]);
   const messagesRef = useRef<AiMessage[]>([]);
@@ -595,6 +612,15 @@ export function AiProvider({
      "continue" picks up exactly where it stopped — with the plan,
      milestones and open review issues intact instead of a cold restart. */
   const resumeRef = useRef<Array<Record<string, unknown>> | null>(null);
+  /* Game Development Orchestrator — the staged pipeline state. A ref holds
+     the truth (tool runs read/mutate it); the state copy only drives UI.
+     The pipeline survives a session stop/resume like the plan and milestones. */
+  const [gda, setGda] = useState<GdaState | null>(null);
+  const gdaRef = useRef<GdaState | null>(null);
+  const updateGda = useCallback((next: GdaState | null) => {
+    gdaRef.current = next;
+    setGda(next);
+  }, []);
   const [voiceEnabled, setVoiceEnabled] = useState(false);
   const [config, setConfig] = useState<AiConfig>({ provider: "ollama", endpoint: "", model: "", key: "" });
   const configRef = useRef(config);
@@ -1408,8 +1434,161 @@ export function AiProvider({
           return res.ok ? (path ? `Opened ${path} for the user.` : "Opened the Nex Folder in Explorer.") : res.error ?? "Couldn't open that.";
         },
       },
+      {
+        name: "gda-start",
+        usage: "/gda-start <objective>",
+        description:
+          "Start the staged Game Development pipeline (orchestrator) for a project-scale engine build. The orchestrator walks the project through explicit phases — Game Design → Architecture → Assets/World → Gameplay → Systems → AI/NPCs → Integration → Playtest → Polish → Final Verification — and enforces a quality gate on each (defaults: overall ≥90, technical ≥90, functionality ≥95, test confidence ≥90, performance ≥85). You cannot declare a phase done: only a gda-review report that passes the gate advances the pipeline. Call this at the start of any whole-game/project build (scope: quick for small tasks).",
+        parameters: {
+          type: "object",
+          properties: {
+            objective: { type: "string", description: "The project: what to build, in one or two sentences." },
+            project: { type: "string", description: "Optional short project name." },
+            engine: { type: "string", description: "Which connected engine to build in (e.g. 'Roblox Studio' or 'Unreal Engine'). Omit to use the only connected engine." },
+            scope: { type: "string", enum: ["full", "quick"], description: "full = 10-phase pipeline (default, project-scale); quick = compact pipeline for small features/fixes." },
+            gates: { type: "object", description: "Optional threshold overrides {overall, technical, functionality, testing, performance} — only with a real reason; never lower them to pass a failing phase." },
+          },
+          required: ["objective"],
+        },
+        run: (args) => {
+          const objective = String(args.objective ?? "").trim().slice(0, 600);
+          if (!objective) return "gda-start needs an objective — what should I build?";
+          const engines = connectedEnginesRef.current;
+          if (engines.length === 0) {
+            return "No engine is connected. Connect Roblox Studio or Unreal Engine in Settings → Connections before starting the pipeline.";
+          }
+          const engine = String(args.engine ?? "").trim() || engines[0];
+          if (!engines.includes(engine)) return `"${engine}" is not connected. Connected: ${engines.join(", ")}.`;
+          const scope: GdaScope = args.scope === "quick" ? "quick" : "full";
+          const rawGates = args.gates && typeof args.gates === "object" ? (args.gates as Record<string, unknown>) : null;
+          const gates = rawGates
+            ? {
+                overall: gdaNum(rawGates.overall, DEFAULT_GATE.overall),
+                technical: gdaNum(rawGates.technical, DEFAULT_GATE.technical),
+                functionality: gdaNum(rawGates.functionality, DEFAULT_GATE.functionality),
+                testing: gdaNum(rawGates.testing, DEFAULT_GATE.testing),
+                performance: gdaNum(rawGates.performance, DEFAULT_GATE.performance),
+              }
+            : undefined;
+          const state = gdaStart({ objective, engine, scope, gates, project: String(args.project ?? "").trim() || undefined });
+          updateGda(state);
+          planRef.current = "";
+          milestonesRef.current = [];
+          issuesRef.current = [];
+          logActivity({ kind: "phase", text: `Pipeline started (${scope}) — ${objective.slice(0, 160)}` });
+          const first = state.pipeline.phases[0];
+          logActivity({ kind: "phase", text: `Phase 1/${state.pipeline.phases.length}: ${first.label} (${first.role})` });
+          return `Pipeline started for ${state.project} in ${engine}. ${phaseDirective(state)}`;
+        },
+      },
+      {
+        name: "gda-review",
+        usage: "/gda-review",
+        description:
+          "Submit the Quality Reviewer's structured report for the current pipeline phase. The orchestrator evaluates it against the phase's gate (defaults: overall ≥90, technical ≥90, functionality ≥95, testing ≥90, performance ≥85). Critical issues auto-fail the gate no matter the scores. A phase is complete only when this gate passes — never because the work was merely generated. Evidence must list exactly what you inspected and tested through the engine (scripts read, game tree, console output, playtests, screen captures). A REJECT sends you back to improve the phase; repeated rejects mark it blocked with its issues carried forward.",
+        parameters: {
+          type: "object",
+          properties: {
+            overall: { type: "number", description: "0-100 overall quality of the phase work." },
+            technical: { type: "number", description: "0-100 technical/architecture quality." },
+            functionality: { type: "number", description: "0-100 how completely the phase's functionality works." },
+            testing: { type: "number", description: "0-100 confidence that the work was actually tested/verified, not just generated." },
+            performance: { type: "number", description: "0-100 performance of what was built." },
+            evidence: { type: "string", description: "Exactly what you inspected and verified: tool calls and results that prove the work exists and works." },
+            criticalIssues: { type: "array", items: { type: "string" }, description: "Critical bugs — these auto-fail the gate." },
+            majorIssues: { type: "array", items: { type: "string" }, description: "Major problems that should be fixed before this phase advances." },
+            minorIssues: { type: "array", items: { type: "string" }, description: "Minor nits." },
+            improvements: { type: "array", items: { type: "string" }, description: "What would make the phase better." },
+            testsRequired: { type: "array", items: { type: "string" }, description: "Tests still needed." },
+            reason: { type: "string", description: "One-line verdict rationale." },
+          },
+          required: ["overall", "technical", "functionality", "testing", "performance", "evidence"],
+        },
+        run: (args) => {
+          const s = gdaRef.current;
+          if (!s || !s.active || s.finished) return "No active pipeline — call gda-start first.";
+          const phaseLabel = currentPhase(s)?.label ?? "current phase";
+          const report: QualityReport = {
+            overall: gdaNum(args.overall, 0),
+            technical: gdaNum(args.technical, 0),
+            functionality: gdaNum(args.functionality, 0),
+            testing: gdaNum(args.testing, 0),
+            performance: gdaNum(args.performance, 0),
+            evidence: String(args.evidence ?? "").trim().slice(0, 800),
+            criticalIssues: gdaStrs(args.criticalIssues),
+            majorIssues: gdaStrs(args.majorIssues),
+            minorIssues: gdaStrs(args.minorIssues),
+            improvements: gdaStrs(args.improvements),
+            testsRequired: gdaStrs(args.testsRequired),
+            reason: String(args.reason ?? "").trim().slice(0, 300),
+          };
+          const outcome = gdaSubmitReview(s, report);
+          updateGda(outcome.state);
+          if (outcome.verdict) {
+            logActivity({
+              kind: "phase",
+              text: outcome.verdict.pass ? `Gate PASS — ${phaseLabel}` : `Gate REJECT — ${phaseLabel}`,
+              detail: outcome.verdict.reason.slice(0, 240),
+            });
+          }
+          if (outcome.advancedTo && outcome.advancedTo.id !== "done") {
+            logActivity({
+              kind: "phase",
+              text: `Phase ${outcome.state.phaseIndex + 1}/${outcome.state.pipeline.phases.length}: ${outcome.advancedTo.label} (${outcome.advancedTo.role})`,
+            });
+          }
+          return outcome.message;
+        },
+      },
+      {
+        name: "gda-issue",
+        usage: "/gda-issue <issue>",
+        description: "Record an open blocker or issue in the active pipeline. It stays in the live digest until a passing gda-review clears it — the final gate cannot pass while blockers remain.",
+        parameters: {
+          type: "object",
+          properties: { issue: { type: "string", description: "The blocker, short and concrete." } },
+          required: ["issue"],
+        },
+        run: (args) => {
+          const s = gdaRef.current;
+          if (!s || !s.active) return "No active pipeline — call gda-start first.";
+          const issue = String(args.issue ?? "").trim().slice(0, 240);
+          if (!issue) return "gda-issue needs the issue text.";
+          updateGda(gdaRecordBlocker(s, issue));
+          logActivity({ kind: "phase", text: `Blocker recorded: ${issue.slice(0, 140)}` });
+          return "Blocker recorded — it stays in the digest until a passing review clears it.";
+        },
+      },
+      {
+        name: "gda-status",
+        usage: "/gda-status",
+        description: "Show the current state of the staged Game Development pipeline: phase, gate results, retries, blockers.",
+        parameters: { type: "object", properties: {} },
+        run: () => {
+          const s = gdaRef.current;
+          return s && s.active ? gdaStatusText(s) : "No active pipeline. Call gda-start to begin a staged build.";
+        },
+      },
+      {
+        name: "gda-finish",
+        usage: "/gda-finish <summary>",
+        description: "Close a fully-passed pipeline with your final verified summary (what you built, how you verified it, what you'd improve). Only works after the final gate has passed — never call this on unverified work.",
+        parameters: {
+          type: "object",
+          properties: { summary: { type: "string", description: "Final summary of what was built and verified." } },
+          required: ["summary"],
+        },
+        run: (args) => {
+          const s = gdaRef.current;
+          if (!s || !s.active) return "No active pipeline to finish — call gda-start first.";
+          const res = gdaFinish(s, String(args.summary ?? "").trim());
+          updateGda(res.state);
+          if (res.ok) logActivity({ kind: "phase", text: "Pipeline COMPLETED — final summary recorded" });
+          return res.message;
+        },
+      },
     ];
-  }, [state, vault, memory, launch, onNavigate, onOpenFolder, onOpenNote, actions, logActivity]);
+  }, [state, vault, memory, launch, onNavigate, onOpenFolder, onOpenNote, actions, logActivity, updateGda]);
 
   /* MCP engines (Roblox Studio, Unreal Engine, …) — every tool a connected
      engine advertises becomes a real function the model can call. The run
@@ -1470,7 +1649,7 @@ export function AiProvider({
               args = JSON.parse(remainder);
             } catch {
               const first = Object.keys(tool.parameters.properties ?? {})[0];
-              args = first === "query" || first === "name" || first === "view" || first === "path" ? { [first]: remainder } : { query: remainder };
+              args = first === "query" || first === "name" || first === "view" || first === "path" || first === "objective" || first === "issue" ? { [first]: remainder } : { query: remainder };
             }
           }
           const result = await tool.run(args);
@@ -1591,6 +1770,7 @@ export function AiProvider({
             `Plan: ${planRef.current || "not recorded yet — call the plan tool early"}`,
             `Completed milestones: ${milestonesRef.current.length > 0 ? milestonesRef.current.slice(-12).join(" | ") : "none yet"}`,
             `Open issues from your last self-review: ${issuesRef.current.length > 0 ? issuesRef.current.join("; ") : "none"}`,
+            gdaRef.current?.active ? gdaDigest(gdaRef.current) : "",
           ].join("\n");
           msgsArr.splice(1, 0, { role: "user", content: digest });
         };
@@ -1863,6 +2043,8 @@ export function AiProvider({
     planRef.current = "";
     milestonesRef.current = [];
     issuesRef.current = [];
+    gdaRef.current = null;
+    setGda(null);
   }, [setEmotionFor]);
 
   const clearActivity = useCallback(() => {
@@ -1918,6 +2100,7 @@ export function AiProvider({
       voiceEnabled,
       setVoiceEnabled,
       activity,
+      gda,
       sessionStart,
       toolCount,
       clearActivity,
@@ -1927,7 +2110,7 @@ export function AiProvider({
       emotionDebug,
       intensity: emotionIntensity,
     }),
-    [messages, thoughts, busy, emotion, config, tools, send, clearChat, saveConfigCb, testConnection, compactMemory, setListening, setEmotionFor, announce, voiceEnabled, activity, sessionStart, toolCount, clearActivity, stopSession, stopRequested, react, emotionDebug, emotionIntensity],
+    [messages, thoughts, busy, emotion, config, tools, send, clearChat, saveConfigCb, testConnection, compactMemory, setListening, setEmotionFor, announce, voiceEnabled, gda, activity, sessionStart, toolCount, clearActivity, stopSession, stopRequested, react, emotionDebug, emotionIntensity],
   );
 
   return <AiContext.Provider value={value}>{children}</AiContext.Provider>;

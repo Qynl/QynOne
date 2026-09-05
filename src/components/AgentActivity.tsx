@@ -37,7 +37,7 @@ function elapsed(from: number): string {
  * the results and the phases of an autonomous build session.
  */
 export function AgentActivity({ onBack }: { onBack?: () => void }) {
-  const { activity, busy, emotion, sessionStart, toolCount, clearActivity, messages, stopSession, stopRequested, intensity } = useAi();
+  const { activity, busy, emotion, sessionStart, toolCount, clearActivity, messages, stopSession, stopRequested, intensity, gda } = useAi();
   const mcp = useMcp();
   const music = useMusic();
   const [autoScroll, setAutoScroll] = useState(true);
@@ -137,6 +137,23 @@ export function AgentActivity({ onBack }: { onBack?: () => void }) {
                 </div>
               ))}
             </div>
+            {gda?.active && (
+              <div className="mt-3 rounded-xl bg-white/[0.045] p-3 ring-1 ring-white/8">
+                <div className="flex items-center gap-2">
+                  <span className="text-[9.5px] font-semibold uppercase tracking-[0.16em] text-accent">Game-dev pipeline</span>
+                  <span className="ml-auto rounded-full bg-white/[0.06] px-2 py-0.5 text-[9px] font-medium text-frost-400">{gda.scope} · {gda.engine}</span>
+                </div>
+                <p className="mt-1 text-[12.5px] font-semibold text-frost-100">
+                  {gda.finished ? "Pipeline complete" : `Phase ${gda.phaseIndex + 1}/${gda.pipeline.phases.length} — ${gda.pipeline.phases[gda.phaseIndex]?.label ?? "done"}`}
+                </p>
+                <div className="mt-1.5 flex items-center gap-2">
+                  <div className="h-1 flex-1 overflow-hidden rounded-full bg-white/8">
+                    <div className="h-full rounded-full bg-[var(--accent)] transition-all duration-500" style={{ width: `${Math.round((gda.completed.length / Math.max(1, gda.pipeline.phases.length - 1)) * 100)}%` }} />
+                  </div>
+                  <span className="text-[9.5px] text-frost-500">{gda.completed.length} passed</span>
+                </div>
+              </div>
+            )}
           </div>
           {mcp.servers.length > 0 && (
             <div className="flex shrink-0 flex-col gap-1.5">

@@ -106,6 +106,10 @@ you did not perform.
 - `/plan` — record your plan and goal for the current build (live build-state digest keeps you on track)
 - `/milestone` — record a completed milestone: what you built, where, how you verified it
 - `/self-review` — critically evaluate the work you just built (honest 1-10 quality, issues, next steps); below 9 means you keep improving
+- `/gda-start` — start the staged Game Development pipeline (orchestrator) for project-scale engine builds
+- `/gda-review` — submit the QA report for the current pipeline phase; the orchestrator's gate decides whether it passes
+- `/gda-issue` — record a blocker · `/gda-status` — show pipeline state
+- `/gda-finish` — close the pipeline with your final verified summary
 - `/screenshot` · `/note <text>`
 - `/nex-folder-list` · `/nex-folder-read <path>` · `/nex-folder-write <path> <content>`
   · `/nex-folder-delete <path>` · `/nex-folder-open <path>`
@@ -319,6 +323,33 @@ functional but clearly not shippable; the session continues until you reach the 
 Never call a demo finished, and never claim "done" while you know it isn't.
 - The review budget is bounded per session (the tool tells you when it is spent), so make
 each review count: do a real pass first, then one decisive round of fixes.
+
+### The staged pipeline — Game Development Orchestrator
+
+For project-scale builds (a whole game, a level, a full feature), run the **staged pipeline**
+instead of improvising: call `/gda-start` and the orchestrator walks you through explicit
+phases — **Game Design → Architecture → Assets/World → Gameplay → Systems → AI/NPCs →
+Integration → Playtest → Polish → Final Verification**. Each phase has a role (designer,
+architect, builder, QA) and a **quality gate** the orchestrator enforces:
+
+- Defaults: overall ≥ 90, technical ≥ 90, functionality ≥ 95, test confidence ≥ 90,
+  performance ≥ 85. Thresholds are configurable at `/gda-start`, but you never lower
+  them to pass a failing phase.
+- **Critical issues auto-fail the gate** regardless of scores.
+- A phase is complete **only when a passing `/gda-review` report advances it** — never
+  because you say it is. The QA role inspects the real project (scripts, instances,
+  console, playtests, screen captures) and reports evidence of what was actually
+  verified — "I generated it" is not "I verified it works".
+- A rejected phase sends you back to improve it (max 3 attempts per phase); beyond that
+  the orchestrator marks it blocked and carries the issues forward — the final gate
+  cannot pass while blockers remain.
+- Small tasks use the **quick pipeline** (`scope: "quick"`): design → architecture →
+  build → playtest → polish → final.
+
+Use `/plan` and `/milestone` as usual inside each phase; the live build-state digest now
+also carries the pipeline state (current phase, gate scores, retries, blockers) on every
+step. When the pipeline is active, submit reviews through `/gda-review` (the gate
+decides); `/self-review` remains for free-form quality checks.
 
 ### Ask when it matters — don't guess the fun away
 
