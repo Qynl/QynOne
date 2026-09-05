@@ -22,6 +22,8 @@ import { dateKey, eventSortKey, fmtTime, parseTime, relativeDay, todayKey, uid }
 import { speak, stopSpeaking, useNexVoice } from "./speech";
 import { DEFAULT_GATE, currentPhase, gdaDigest, gdaFinish, gdaRecordBlocker, gdaStart, gdaStatusText, gdaSubmitReview, phaseDirective } from "./gamedev";
 import type { GdaScope, GdaState, QualityReport } from "./gamedev";
+import { SUBAGENT_LIMITS, SUBAGENT_ROLE_ORDER, SUBAGENT_ROLES, budgetFor, buildSubAgentBrief, emptyResult, parseSubAgentResult, resultToText, subagentDigest } from "./subagents";
+import type { SubAgentResult, SubAgentRole, SubAgentRun, SubAgentSpec } from "./subagents";
 
 /* ------------------------------------------------------------------ */
 /* Types                                                               */
@@ -133,6 +135,8 @@ export interface AgentEvent {
   text: string;
   /** for tool events: which connection (e.g. "Roblox Studio") the tool belongs to */
   engine?: string;
+  /** for events produced by a subagent: that role's label (e.g. "QA Agent") */
+  subagent?: string;
   /** for tool-end: ok / error, plus a short result excerpt */
   ok?: boolean;
   detail?: string;
@@ -538,6 +542,8 @@ interface AiValue {
   setVoiceEnabled: (enabled: boolean) => void;
   /** Live agent trace: thoughts, tool calls, results, phases — newest last. */
   activity: AgentEvent[];
+  /** Subagents spawned this session — running, finished, failed (live). */
+  subagents: SubAgentRun[];
   /** Staged game-dev pipeline state — null when no pipeline is running. */
   gda: GdaState | null;
   /** When the current (or last) agent session started; null before any run. */
@@ -598,6 +604,340 @@ export function AiProvider({
   const [busy, setBusy] = useState(false);
   const [stopRequested, setStopRequested] = useState(false);
   const stopRef = useRef(false);
+
+  /* ------------------------------------------------------------------ */
+  /* Subagents — the specialist team behind engine builds. Each subagent  */
+  /* runs its own short, focused model conversation restricted to the     */
+  /* MCP engine tools ONLY, and reports a structured result the lead      */
+  /* agent evaluates. The lead agent decides who to spawn and when;       */
+  /* budgets here stop runaway teams (subagents can never spawn           */
+  /* subagents — their toolset has no spawn tool — so recursion is        */
+  /* structurally impossible).                                            */
+  /* ------------------------------------------------------------------ */
+
+  const [subagents, setSubagents] = useState<SubAgentRun[]>([]);
+  const subagentsRef = useRef<SubAgentRun[]>([]);
+  subagentsRef.current = subagents;
+  const totalSpawnedRef = useRef(0);
+  const activeSubagentsRef = useRef(0);
+  const subagentWaitersRef = useRef<Array<() => void>>([]);
+  const subagentAbortRef = useRef(false);
+  const abortIdsRef = useRef<Set<string>>(new Set());
+  /* Bumped every chat clear: subagents spawned for a cleared conversation
+     stop at their next step instead of silently keeping the engines busy
+     after the user reset the session. */
+  const sessionEpochRef = useRef(0);
+
+  const patchSubagents = useCallback((updater: (prev: SubAgentRun[]) => SubAgentRun[]) => {
+    const next = updater(subagentsRef.current);
+    subagentsRef.current = next;
+    setSubagents(next);
+  }, []);
+
+  /** Force a UI refresh of one subagent row (steps count ticks live). */
+  const touchSubagent = useCallback(
+    (id: string) => {
+      if (!subagentsRef.current.some((r) => r.id === id)) return;
+      patchSubagents((prev) => prev.map((r) => (r.id === id ? { ...r } : r)));
+    },
+    [patchSubagents],
+  );
+
+  /* Concurrency cap: parallel spawns beyond maxConcurrent queue on a
+     promise semaphore instead of hammering the engine connections. */
+  const acquireSubagentSlot = useCallback(async (): Promise<boolean> => {
+    for (;;) {
+      if (stopRef.current || subagentAbortRef.current) return false;
+      if (activeSubagentsRef.current < SUBAGENT_LIMITS.maxConcurrent) {
+        activeSubagentsRef.current += 1;
+        return true;
+      }
+      await new Promise<void>((resolve) => subagentWaitersRef.current.push(resolve));
+    }
+  }, []);
+
+  const releaseSubagentSlot = useCallback(() => {
+    const waiters = subagentWaitersRef.current;
+    if (waiters.length > 0) waiters.shift()?.(); // slot transfers to the next waiter
+    else activeSubagentsRef.current = Math.max(0, activeSubagentsRef.current - 1);
+  }, []);
+
+  /**
+   * Run one subagent to completion: its own conversation, its own step
+   * budget, MCP engine tools only, structured result back to the lead
+   * agent. Never throws — returns the structured result (blocked on any
+   * stop/abort/budget/time condition, honestly labeled).
+   */
+  /* Plain async functions (not useCallback): they must read engine tools and
+     activity loggers that are declared LATER in this provider — safe because
+     these bodies only run after a full render, when everything is initialized.
+     The dependency arrays of useCallback would evaluate too early. */
+  const executeSubagentRun = async (run: SubAgentRun, spec: SubAgentSpec, toolsAvail: AiToolDef[], cfg: AiConfig, model: string, epoch: number): Promise<SubAgentResult> => {
+      const def = SUBAGENT_ROLES[spec.role];
+      const log = (event: Omit<AgentEvent, "id" | "ts">) => logActivity({ ...event, subagent: def.role });
+      const msgs: Array<Record<string, unknown>> = [
+        { role: "system", content: def.prompt },
+        { role: "user", content: buildSubAgentBrief(spec) },
+      ];
+      const wallStart = Date.now();
+      const budget = run.stepsBudget;
+      let lastContent = "";
+      for (let step = 0; step < budget; step++) {
+        if (epoch !== sessionEpochRef.current) {
+          return emptyResult("blocked", `Subagent stopped — the chat was cleared while it worked (${run.stepsUsed} engine step${run.stepsUsed === 1 ? "" : "s"} done). Engine changes already applied are safe.`);
+        }
+        if (stopRef.current || subagentAbortRef.current || abortIdsRef.current.has(run.id)) {
+          return emptyResult("blocked", `Subagent aborted (${run.stepsUsed} engine step${run.stepsUsed === 1 ? "" : "s"} done) — the engine work so far is safe.`);
+        }
+        if (Date.now() - wallStart > SUBAGENT_LIMITS.maxMs) {
+          return emptyResult("blocked", `Subagent hit its ${Math.round(SUBAGENT_LIMITS.maxMs / 60000)}-minute work cap without finishing (${run.stepsUsed} engine step${run.stepsUsed === 1 ? "" : "s"} done).`);
+        }
+        const controller = new AbortController();
+        sessionAbortRef.current = controller;
+        const timeout = window.setTimeout(() => controller.abort(), SUBAGENT_LIMITS.stepMs);
+        let res: ChatResult;
+        try {
+          res = await chatOnce(cfg, model, msgs, toolsAvail, controller.signal, { temperature: def.temperature, maxTokens: 4096 });
+        } catch (e) {
+          const err = e as Error;
+          if (stopRef.current || subagentAbortRef.current || abortIdsRef.current.has(run.id)) {
+            return emptyResult("blocked", `Subagent aborted (${run.stepsUsed} engine step${run.stepsUsed === 1 ? "" : "s"} done) — the engine work so far is safe.`);
+          }
+          return err.name === "AbortError"
+            ? emptyResult("blocked", `Subagent model call timed out (${run.stepsUsed} engine step${run.stepsUsed === 1 ? "" : "s"} done) — engine work so far is safe.`)
+            : emptyResult("blocked", `Subagent model call failed: ${err.message.slice(0, 240)}`);
+        } finally {
+          window.clearTimeout(timeout);
+        }
+        if (res.content.trim()) {
+          lastContent = res.content.trim();
+          log({ kind: "thought", text: res.content.trim().slice(0, 220) });
+        }
+        if (!res.toolCalls || res.toolCalls.length === 0) {
+          const parsed = parseSubAgentResult(res.content);
+          if (parsed.ok) return parsed.result;
+          /* Unstructured reply: keep it visible, never trust it as verified. */
+          const wrapped = emptyResult("blocked", `The ${def.label} replied without the required JSON report — treat its claims as unverified.`);
+          wrapped.summary = `Raw reply excerpt: ${res.content.trim().slice(0, 380)}`;
+          return wrapped;
+        }
+        msgs.push({
+          role: "assistant",
+          content: res.content || null,
+          tool_calls: res.toolCalls.map((tc) => ({
+            id: tc.id ?? `call_${run.id}_${step}_${Math.random().toString(36).slice(2, 8)}`,
+            type: "function",
+            function: { name: tc.function.name, arguments: tc.function.arguments },
+          })),
+        });
+        /* Execute the step's tool calls — independent ones in parallel, same
+           as the main loop. Every result streams into the live activity feed
+           tagged with this subagent's role. */
+        const calls = res.toolCalls.map((tc) => {
+          const tool = toolsAvail.find((t) => t.name === tc.function.name);
+          const started = Date.now();
+          log({ kind: "tool-start", text: tool ? tool.usage : tc.function.name, engine: spec.engine, detail: summarizeArgs(tc.function.arguments) });
+          const exec = async (): Promise<string> => {
+            try {
+              const args = (() => {
+                try {
+                  return JSON.parse(tc.function.arguments ?? "{}") as Record<string, unknown>;
+                } catch {
+                  return {};
+                }
+              })();
+              return tool ? await tool.run(args) : JSON.stringify({ error: `unknown tool ${tc.function.name}` });
+            } catch (e) {
+              return JSON.stringify({ error: String((e as Error)?.message ?? e) });
+            }
+          };
+          return { tc, tool, started, exec };
+        });
+        const settled = await Promise.all(calls.map((c) => c.exec().then((out) => ({ c, out }))));
+        for (const { c, out } of settled) {
+          const ms = Date.now() - c.started;
+          const failed = toolResultFailed(out);
+          run.stepsUsed += 1;
+          setToolCount((n) => n + 1);
+          touchSubagent(run.id);
+          log({
+            kind: "tool-end",
+            text: c.tool ? c.tool.usage : c.tc.function.name,
+            engine: spec.engine,
+            ok: !failed,
+            detail: out.length > 240 ? `${out.slice(0, 240)}…` : out,
+            ms,
+          });
+          msgs.push(c.tc.id ? { role: "tool", tool_call_id: c.tc.id, content: clampToolResult(out) } : { role: "tool", content: clampToolResult(out) });
+        }
+        compressOldToolResults(msgs, 6);
+      }
+      /* Budget exhausted without a final report — honest partial, never a guess. */
+      return emptyResult("blocked", `The ${def.label} used all ${budget} engine steps without reporting. Last thing it said: ${lastContent.slice(0, 220) || "nothing"}`);
+  };
+
+  /** The spawn tool's runtime: state bookkeeping + budget + slot + report. */
+  const runSubagent = async (specIn: SubAgentSpec): Promise<string> => {
+      if (totalSpawnedRef.current >= SUBAGENT_LIMITS.maxPerSession) {
+        return `Refused: ${SUBAGENT_LIMITS.maxPerSession} subagent spawns already used this session (autonomy budget). Consolidate with the results you have instead of growing the team — spawn again only when a genuinely new specialist task earns it.`;
+      }
+      const def = SUBAGENT_ROLES[specIn.role];
+      const engineTarget = String(specIn.engine ?? "").trim();
+      let toolsAvail = engineTools;
+      if (engineTarget) {
+        const want = engineTarget.toLowerCase();
+        toolsAvail = engineTools.filter((t) => t.usage.split(" · ")[0].toLowerCase() === want);
+      }
+      if (toolsAvail.length === 0) {
+        const engines = connectedEnginesRef.current;
+        return `Subagent not spawned — no ${engineTarget ? `connection named "${engineTarget}"` : "engine"} is online. Connected: ${engines.length > 0 ? engines.join(", ") : "none"}. Ask the user to connect Roblox Studio / Unreal Engine (Settings → Connections) first.`;
+      }
+      const epoch = sessionEpochRef.current;
+      const gotSlot = await acquireSubagentSlot();
+      if (!gotSlot) return "Subagent not spawned — a stop was requested before it could start.";
+      /* The spawn was queued while another subagent ran; the chat may have
+         been cleared (or stopped) in the meantime — never start a specialist
+         for a conversation the user reset. */
+      if (epoch !== sessionEpochRef.current) {
+        releaseSubagentSlot();
+        return "Subagent not spawned — the chat was cleared while it was queued.";
+      }
+      const id = `sub_${Date.now().toString(36)}${Math.random().toString(36).slice(2, 7)}`;
+      const engineUsed = engineTarget || toolsAvail[0].usage.split(" · ")[0];
+      const spec: SubAgentSpec = {
+        ...specIn,
+        engine: engineUsed,
+        task: specIn.task.trim().slice(0, 1800),
+      };
+      const run: SubAgentRun = {
+        id,
+        role: spec.role,
+        task: spec.task.slice(0, 240),
+        engine: engineUsed,
+        status: "running",
+        stepsUsed: 0,
+        stepsBudget: budgetFor(spec),
+        startedAt: Date.now(),
+        finishedAt: null,
+        result: null,
+      };
+      totalSpawnedRef.current += 1;
+      patchSubagents((prev) => [...prev, run]);
+      logActivity({ kind: "phase", text: `${def.emoji} ${def.title} spawned — ${run.task.slice(0, 150)}`, subagent: def.role });
+      try {
+        const cfg = configRef.current;
+        const model = await resolveModel(cfg);
+        const result = await executeSubagentRun(run, spec, toolsAvail, cfg, model, epoch);
+        const interrupted =
+          result.status === "blocked" &&
+          (epoch !== sessionEpochRef.current || stopRef.current || subagentAbortRef.current || abortIdsRef.current.has(run.id));
+        run.status = interrupted ? "aborted" : "done";
+        run.result = result;
+        run.finishedAt = Date.now();
+        touchSubagent(run.id);
+        logActivity({
+          kind: "phase",
+          text: interrupted
+            ? `${def.emoji} ${def.title} stopped: ${result.summary.slice(0, 200)}`
+            : `${def.emoji} ${def.title} finished: ${result.status}${result.qualityScore > 0 ? ` · quality ${result.qualityScore}/100 · confidence ${result.confidence}%` : ""}`, subagent: def.role,
+          detail: result.summary.slice(0, 240),
+        });
+        react({ kind: "tool-result", ok: result.status !== "failure", engine: true, important: true });
+        return resultToText(def.title, result, { status: run.status, stepsUsed: run.stepsUsed });
+      } catch (e) {
+        run.status = "failed";
+        run.error = String((e as Error)?.message ?? e).slice(0, 240);
+        run.finishedAt = Date.now();
+        touchSubagent(run.id);
+        return `The ${def.title} subagent crashed: ${run.error}`;
+      } finally {
+        releaseSubagentSlot();
+      }
+  };
+
+  /* Orchestration tools — how the lead agent runs its team. */
+  const agentTools = useMemo<AiToolDef[]>(() => {
+    const rolesHelp = SUBAGENT_ROLE_ORDER.map((r) => `${SUBAGENT_ROLES[r].emoji} ${SUBAGENT_ROLES[r].label} — ${SUBAGENT_ROLES[r].responsibility}`).join(" ");
+    const whenHelp = SUBAGENT_ROLE_ORDER.map((r) => `${SUBAGENT_ROLES[r].label}: ${SUBAGENT_ROLES[r].when}`).join(" ");
+    return [
+      {
+        name: "subagent-spawn",
+        usage: "subagent-spawn",
+        description: `Spawn ONE specialist subagent that does its own focused engine (MCP) work and returns a structured result you evaluate. Roles: ${rolesHelp} When to spawn: ${whenHelp} Pass only the context that role needs (files/systems it touches, not the whole project). Subagents act ONLY through the connected engine's tools — never through QynOne tools. Call several subagent-spawn in the SAME step to run independent specialists in parallel (at most ${SUBAGENT_LIMITS.maxConcurrent} at once; the rest queue). A subagent reports status, findings, problems, filesAffected and a confidence/quality score — a Builder saying finished is NOT proof: verify with a QA subagent or your own engine checks before trusting. Never spawn a subagent for work you can do yourself in 1-3 tool calls, and never spawn duplicates of finished work.`,
+        parameters: {
+          type: "object",
+          properties: {
+            role: { type: "string", enum: SUBAGENT_ROLE_ORDER, description: "Which specialist (designer, architect, builder, qa, debugger, polisher, researcher)." },
+            task: { type: "string", description: "The ONE focused task this subagent must accomplish. Be specific about what to build/test/fix and where." },
+            project: { type: "string", description: "Short project name." },
+            engine: { type: "string", description: "Which connected engine (e.g. 'Roblox Studio'). Omit to let it use any connected engine." },
+            phase: { type: "string", description: "Current phase/context, e.g. 'Gameplay & Core Loop'." },
+            files: { type: "string", description: "Only the relevant files/scripts/systems it may touch (never the whole project)." },
+            constraints: { type: "string", description: "Hard constraints it must respect." },
+            expectedResult: { type: "string", description: "What a good result looks like." },
+            quality: { type: "string", description: "Quality requirements it should self-check against." },
+            maxSteps: { type: "number", description: "Optional step-budget override (defaults per role)." },
+          },
+          required: ["role", "task"],
+        },
+        run: (args) => {
+          const roleRaw = String(args.role ?? "").toLowerCase().trim();
+          const def = SUBAGENT_ROLES[roleRaw as SubAgentRole];
+          if (!def) {
+            return `Unknown role \"${roleRaw}\". Roles: ${SUBAGENT_ROLE_ORDER.map((r) => SUBAGENT_ROLES[r].label).join(", ")}.`;
+          }
+          const task = String(args.task ?? "").trim();
+          if (!task) return `${def.title} needs a task — what exactly should it do?`;
+          const spec: SubAgentSpec = {
+            role: def.role,
+            task,
+            project: String(args.project ?? "").trim().slice(0, 120) || undefined,
+            engine: String(args.engine ?? "").trim().slice(0, 120) || undefined,
+            phase: String(args.phase ?? "").trim().slice(0, 160) || undefined,
+            files: String(args.files ?? "").trim().slice(0, 600) || undefined,
+            constraints: String(args.constraints ?? "").trim().slice(0, 600) || undefined,
+            expectedResult: String(args.expectedResult ?? "").trim().slice(0, 600) || undefined,
+            quality: String(args.quality ?? "").trim().slice(0, 600) || undefined,
+            maxSteps: typeof args.maxSteps === "number" && Number.isFinite(args.maxSteps) ? Math.round(args.maxSteps) : undefined,
+          };
+          return runSubagent(spec);
+        },
+      },
+      {
+        name: "subagent-status",
+        usage: "subagent-status",
+        description: "Show every subagent spawned this session: role, task, running steps vs budget, and the structured result of finished ones. Call this when you are deciding whether to spawn more — never duplicate a finished subagent's work.",
+        parameters: { type: "object", properties: {} },
+        run: () => {
+          const runs = subagentsRef.current;
+          if (runs.length === 0) return "No subagents spawned in this session yet.";
+          return [subagentDigest(runs), `Total spawns: ${totalSpawnedRef.current}/${SUBAGENT_LIMITS.maxPerSession} used.`].join("\n");
+        },
+      },
+      {
+        name: "subagent-abort",
+        usage: "subagent-abort",
+        description: "Abort running subagent(s): pass no id to stop every running subagent at its next step, or one id from subagent-status to stop just that one. They wrap up honestly as blocked — engine work already applied stays applied.",
+        parameters: {
+          type: "object",
+          properties: { id: { type: "string", description: "Optional subagent id to abort (all running subagents when omitted)." } },
+          required: [],
+        },
+        run: (args) => {
+          const id = String(args.id ?? "").trim();
+          const running = subagentsRef.current.filter((r) => r.status === "running" || r.status === "queued");
+          if (id) {
+            if (!running.some((r) => r.id === id)) return `No running subagent with id \"${id}\".`;
+            abortIdsRef.current.add(id);
+            return `Abort requested for ${id} — it stops at its next step.`;
+          }
+          if (running.length === 0) return "No subagents are running.";
+          subagentAbortRef.current = true;
+          return `Abort requested for ${running.length} running subagent${running.length === 1 ? "" : "s"} — they stop at their next step and report honestly.`;
+        },
+      },
+    ];
+  }, [runSubagent]);
   /* how many times Nex has self-reviewed a build in the current session —
      bounds the quality loop so it can't spin forever */
   const reviewCountRef = useRef(0);
@@ -1608,7 +1948,10 @@ export function AiProvider({
   }, [mcp]);
 
   /* What the model may call this turn: engine tools + QynOne tools. */
-  const modelTools = useMemo<AiToolDef[]>(() => [...engineTools, ...tools], [engineTools, tools]);
+  /* Agent tools (subagent orchestration) ride along with the engine + QynOne
+     tools the lead model sees. Subagents themselves only ever receive the
+     engine-tools half, so they can never spawn sub-subagents. */
+  const modelTools = useMemo<AiToolDef[]>(() => [...engineTools, ...tools, ...agentTools], [engineTools, tools, agentTools]);
 
   /* ------------------------------------------------------------------ */
   /* Send                                                               */
@@ -1771,6 +2114,7 @@ export function AiProvider({
             `Completed milestones: ${milestonesRef.current.length > 0 ? milestonesRef.current.slice(-12).join(" | ") : "none yet"}`,
             `Open issues from your last self-review: ${issuesRef.current.length > 0 ? issuesRef.current.join("; ") : "none"}`,
             gdaRef.current?.active ? gdaDigest(gdaRef.current) : "",
+            subagentsRef.current.length > 0 ? subagentDigest(subagentsRef.current) : "",
           ].join("\n");
           msgsArr.splice(1, 0, { role: "user", content: digest });
         };
@@ -2043,6 +2387,17 @@ export function AiProvider({
     planRef.current = "";
     milestonesRef.current = [];
     issuesRef.current = [];
+    /* Stop the subagent team for this conversation: every running/queued
+       specialist sees the epoch change at its next step and wraps up
+       honestly (engine work already applied stays applied), so a cleared
+       chat never leaves invisible agents mutating the engines. */
+    sessionEpochRef.current += 1;
+    subagentsRef.current = [];
+    setSubagents([]);
+    totalSpawnedRef.current = 0;
+    activeSubagentsRef.current = 0;
+    subagentAbortRef.current = false;
+    abortIdsRef.current = new Set();
     gdaRef.current = null;
     setGda(null);
   }, [setEmotionFor]);
@@ -2109,8 +2464,9 @@ export function AiProvider({
       react,
       emotionDebug,
       intensity: emotionIntensity,
+      subagents,
     }),
-    [messages, thoughts, busy, emotion, config, tools, send, clearChat, saveConfigCb, testConnection, compactMemory, setListening, setEmotionFor, announce, voiceEnabled, gda, activity, sessionStart, toolCount, clearActivity, stopSession, stopRequested, react, emotionDebug, emotionIntensity],
+    [messages, thoughts, busy, emotion, config, tools, send, clearChat, saveConfigCb, testConnection, compactMemory, setListening, setEmotionFor, announce, voiceEnabled, gda, activity, sessionStart, toolCount, clearActivity, stopSession, stopRequested, react, emotionDebug, emotionIntensity, subagents],
   );
 
   return <AiContext.Provider value={value}>{children}</AiContext.Provider>;

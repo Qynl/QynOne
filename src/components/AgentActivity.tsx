@@ -6,6 +6,7 @@ import { useAi } from "../lib/ai";
 import type { AgentEvent } from "../lib/ai";
 import { CALM_BASE } from "../lib/emotion";
 import { useMcp } from "../lib/mcp";
+import { SUBAGENT_ROLES } from "../lib/subagents";
 import { useMusic } from "../lib/music";
 import { cn } from "../lib/utils";
 
@@ -36,8 +37,22 @@ function elapsed(from: number): string {
  * does it: its thinking, every tool call (including which MCP engine tool),
  * the results and the phases of an autonomous build session.
  */
+const SUBAGENT_STATUS: Record<string, { dot: string; label: string }> = {
+  queued: { dot: "bg-frost-500", label: "queued" },
+  running: { dot: "bg-accent animate-pulse shadow-[0_0_8px_var(--accent-glow)]", label: "working" },
+  done: { dot: "bg-emerald-400", label: "reported" },
+  aborted: { dot: "bg-amber-300", label: "aborted" },
+  failed: { dot: "bg-rose-400", label: "failed" },
+};
+
+/** Badge shown on trace rows that a subagent produced (kept tiny and quiet). */
+function SubagentChip({ role }: { role: string }) {
+  const label = SUBAGENT_ROLES[role as keyof typeof SUBAGENT_ROLES]?.label ?? role;
+  return <span className="rounded-full bg-white/[0.05] px-1.5 py-0.5 text-[9px] font-semibold text-violet-300/90">team · {label}</span>;
+}
+
 export function AgentActivity({ onBack }: { onBack?: () => void }) {
-  const { activity, busy, emotion, sessionStart, toolCount, clearActivity, messages, stopSession, stopRequested, intensity, gda } = useAi();
+  const { activity, busy, emotion, sessionStart, toolCount, clearActivity, messages, stopSession, stopRequested, intensity, gda, subagents } = useAi();
   const mcp = useMcp();
   const music = useMusic();
   const [autoScroll, setAutoScroll] = useState(true);
@@ -154,6 +169,39 @@ export function AgentActivity({ onBack }: { onBack?: () => void }) {
                 </div>
               </div>
             )}
+            {subagents.length > 0 && (
+              <div className="mt-3 rounded-xl bg-white/[0.045] p-3 ring-1 ring-white/8">
+                <div className="flex items-center gap-2">
+                  <span className="text-[9.5px] font-semibold uppercase tracking-[0.16em] text-accent">Specialist team</span>
+                  <span className="ml-auto rounded-full bg-white/[0.06] px-2 py-0.5 text-[9px] font-medium text-frost-400">{subagents.filter((s) => s.status === "running" || s.status === "queued").length} working · {subagents.length} spawned</span>
+                </div>
+                <div className="mt-2 flex max-h-32 flex-col gap-1 overflow-y-auto pr-1">
+                  {subagents.map((s) => {
+                    const def = SUBAGENT_ROLES[s.role];
+                    const st = SUBAGENT_STATUS[s.status] ?? SUBAGENT_STATUS.done;
+                    const active = s.status === "running" || s.status === "queued";
+                    return (
+                      <div key={s.id} className="flex items-center gap-2 rounded-lg bg-white/[0.03] px-2 py-1.5">
+                        <span className="shrink-0 text-[13px]">{def.emoji}</span>
+                        <div className="min-w-0 flex-1">
+                          <p className="truncate text-[11px] font-semibold text-frost-200">
+                            {def.title} <span className="font-normal text-frost-500">· {s.task}</span>
+                          </p>
+                          {active && <p className="truncate text-[9.5px] text-frost-500">{s.engine} · {s.stepsUsed}/{s.stepsBudget} steps</p>}
+                          {s.status === "done" && s.result && <p className="truncate text-[9.5px] text-frost-500">{s.result.summary}</p>}
+                          {s.status === "failed" && <p className="truncate text-[9.5px] text-rose-300/80">{s.error}</p>}
+                        </div>
+                        <span className="flex shrink-0 items-center gap-1.5 rounded-full bg-white/[0.05] px-2 py-0.5">
+                          <i className={cn("h-1.5 w-1.5 rounded-full", st.dot)} />
+                          <span className="text-[9px] font-medium capitalize text-frost-300">{st.label}</span>
+                          {s.status === "done" && s.result && <span className="text-[9px] font-semibold text-frost-400">{s.result.qualityScore}/100</span>}
+                        </span>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
           </div>
           {mcp.servers.length > 0 && (
             <div className="flex shrink-0 flex-col gap-1.5">
@@ -229,6 +277,7 @@ function EventRow({ event }: { event: AgentEvent }) {
         <div className="min-w-0 flex-1">
           <div className="flex flex-wrap items-center gap-x-2 gap-y-0.5">
             <span className="font-mono text-[11px] text-frost-100">{event.text}</span>
+            {event.subagent && <SubagentChip role={event.subagent} />}
             {event.engine && (
               <span className="flex items-center gap-1 rounded-full bg-white/[0.05] px-1.5 py-0.5 text-[9px] font-semibold text-accent">
                 <Cable size={8} /> {event.engine}
@@ -250,6 +299,7 @@ function EventRow({ event }: { event: AgentEvent }) {
         <div className="min-w-0 flex-1">
           <div className="flex items-center gap-2">
             <span className="min-w-0 truncate font-mono text-[10.5px] text-frost-300">{event.text}</span>
+            {event.subagent && <SubagentChip role={event.subagent} />}
             {typeof event.ms === "number" && <span className="shrink-0 rounded bg-white/[0.05] px-1.5 py-0.5 text-[9px] text-frost-400">{fmtMs(event.ms)}</span>}
             <span className="ml-auto shrink-0 text-[9.5px] text-frost-600">{timeOf(event.ts)}</span>
           </div>
@@ -264,7 +314,10 @@ function EventRow({ event }: { event: AgentEvent }) {
         <span className="mt-0.5 shrink-0 text-accent/80">
           <Brain size={12} />
         </span>
-        <p className="min-w-0 flex-1 text-[11.5px] italic leading-relaxed text-frost-300">{event.text}</p>
+        <div className="min-w-0 flex-1">
+          <p className="text-[11.5px] italic leading-relaxed text-frost-300">{event.text}</p>
+          {event.subagent && <SubagentChip role={event.subagent} />}
+        </div>
         <span className="shrink-0 pt-0.5 text-[9px] text-frost-600">{timeOf(event.ts)}</span>
       </motion.div>
     );
@@ -275,6 +328,9 @@ function EventRow({ event }: { event: AgentEvent }) {
         <span className="grid h-5 w-5 place-items-center rounded-md bg-white/[0.06] text-frost-300">
           <Play size={9} />
         </span>
+        {event.subagent && (
+          <span className="rounded-full bg-violet-400/10 px-2 py-0.5 text-[9px] font-semibold uppercase tracking-[0.08em] text-violet-300">{SUBAGENT_ROLES[event.subagent as keyof typeof SUBAGENT_ROLES]?.label ?? event.subagent}</span>
+        )}
         <span className="text-[10.5px] font-semibold uppercase tracking-[0.1em] text-frost-400">{event.text}</span>
         <span className="ml-1 h-px flex-1 bg-white/8" />
       </motion.div>
@@ -301,8 +357,9 @@ function EventRow({ event }: { event: AgentEvent }) {
 /* ------------------------------------------------------------------ */
 
 export function AgentActivityMini({ onOpen }: { onOpen: () => void }) {
-  const { activity, busy, toolCount, sessionStart } = useAi();
+  const { activity, busy, toolCount, sessionStart, subagents } = useAi();
   const latest = activity[activity.length - 1];
+  const teamWorking = subagents.filter((s) => s.status === "running" || s.status === "queued").length;
 
   if (activity.length === 0) {
     return (
@@ -324,7 +381,12 @@ export function AgentActivityMini({ onOpen }: { onOpen: () => void }) {
         <p className="min-w-0 flex-1 truncate text-[10px] font-semibold uppercase tracking-[0.16em] text-frost-400">
           {busy ? "Working now" : `Last session${sessionStart ? ` · ${elapsed(sessionStart)}` : ""}`}
         </p>
-        <span className="shrink-0 text-[9.5px] text-frost-500">{toolCount || activity.filter((e) => e.kind === "tool-end").length} calls</span>
+        <span className="flex shrink-0 items-center gap-2 text-[9.5px] text-frost-500">
+          {teamWorking > 0 && (
+            <span className="rounded-full bg-violet-400/10 px-1.5 py-0.5 font-semibold text-violet-300">team · {teamWorking}</span>
+          )}
+          {toolCount || activity.filter((e) => e.kind === "tool-end").length} calls
+        </span>
       </div>
       {latest && (
         <p className="mt-1.5 line-clamp-2 text-[11px] leading-relaxed text-frost-300">
