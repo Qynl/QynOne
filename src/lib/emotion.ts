@@ -42,9 +42,13 @@ export const CALM_BASE = new Set<AiEmotion>([
   "boot",
 ]);
 
+export function isCalmBase(emotion: AiEmotion | null | undefined): boolean {
+  return Boolean(emotion) && CALM_BASE.has(emotion as AiEmotion);
+}
+
 /** States Nex can occupy as a *base* — the state he returns to after a
     reaction or overlay ends. Everything else is a reaction on top. */
-const BASE_STATES = new Set<AiEmotion>([
+export const BASE_STATES = new Set<AiEmotion>([
   ...CALM_BASE,
   "thinking",
   "working",
