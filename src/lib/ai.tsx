@@ -627,6 +627,10 @@ export function AiProvider({
      stop at their next step instead of silently keeping the engines busy
      after the user reset the session. */
   const sessionEpochRef = useRef(0);
+  /* Latest engine-tool defs — read at call time through the ref so the
+     orchestration tools can keep a stable identity across renders while the
+     underlying MCP toolset swaps when connections change. */
+  const engineToolsRef = useRef<AiToolDef[]>([]);
 
   const patchSubagents = useCallback((updater: (prev: SubAgentRun[]) => SubAgentRun[]) => {
     const next = updater(subagentsRef.current);
@@ -783,14 +787,26 @@ export function AiProvider({
       }
       const def = SUBAGENT_ROLES[specIn.role];
       const engineTarget = String(specIn.engine ?? "").trim();
-      let toolsAvail = engineTools;
+      /* Match the connected engine by exact name first, then a tolerant
+         prefix/substring (model says "roblox" or "unreal" for "Roblox Studio"
+         / "Unreal Engine"). Unique match only — ambiguous names tell the
+         model what is actually connected instead of guessing. */
+      let toolsAvail = engineToolsRef.current;
       if (engineTarget) {
         const want = engineTarget.toLowerCase();
-        toolsAvail = engineTools.filter((t) => t.usage.split(" · ")[0].toLowerCase() === want);
+        const exact = (t: AiToolDef) => t.usage.split(" · ")[0].toLowerCase() === want;
+        const partial = (t: AiToolDef) => {
+          const name = t.usage.split(" · ")[0].toLowerCase();
+          return name.startsWith(want) || name.includes(want);
+        };
+        const byExact = engineToolsRef.current.filter(exact);
+        const byPartial = byExact.length > 0 ? byExact : engineToolsRef.current.filter(partial);
+        const names = new Set(byPartial.map((t) => t.usage.split(" · ")[0]));
+        toolsAvail = names.size === 1 ? engineToolsRef.current.filter((t) => names.has(t.usage.split(" · ")[0])) : [];
       }
       if (toolsAvail.length === 0) {
         const engines = connectedEnginesRef.current;
-        return `Subagent not spawned — no ${engineTarget ? `connection named "${engineTarget}"` : "engine"} is online. Connected: ${engines.length > 0 ? engines.join(", ") : "none"}. Ask the user to connect Roblox Studio / Unreal Engine (Settings → Connections) first.`;
+        return `Subagent not spawned — no ${engineTarget ? `connection matching "${engineTarget}"` : "engine"} is online. Connected: ${engines.length > 0 ? engines.join(", ") : "none"}. Ask the user to connect Roblox Studio / Unreal Engine (Settings → Connections) first.`;
       }
       const epoch = sessionEpochRef.current;
       const gotSlot = await acquireSubagentSlot();
@@ -803,7 +819,10 @@ export function AiProvider({
         return "Subagent not spawned — the chat was cleared while it was queued.";
       }
       const id = `sub_${Date.now().toString(36)}${Math.random().toString(36).slice(2, 7)}`;
-      const engineUsed = engineTarget || toolsAvail[0].usage.split(" · ")[0];
+      /* Canonical connected name ("Roblox Studio"), even when the model asked
+         for a shorthand like "roblox" — the subagent brief should name the
+         real connection. */
+      const engineUsed = toolsAvail[0]?.usage.split(" · ")[0] || engineTarget;
       const spec: SubAgentSpec = {
         ...specIn,
         engine: engineUsed,
@@ -937,7 +956,10 @@ export function AiProvider({
         },
       },
     ];
-  }, [runSubagent]);
+    /* Stable identity: runSubagent reads every piece of live state (engine
+       tools, connections, config, session epoch) through refs at call time,
+       so the tool definitions themselves never churn on unrelated renders. */
+  }, []);
   /* how many times Nex has self-reviewed a build in the current session —
      bounds the quality loop so it can't spin forever */
   const reviewCountRef = useRef(0);
@@ -1946,6 +1968,7 @@ export function AiProvider({
       },
     }));
   }, [mcp]);
+  engineToolsRef.current = engineTools;
 
   /* What the model may call this turn: engine tools + QynOne tools. */
   /* Agent tools (subagent orchestration) ride along with the engine + QynOne

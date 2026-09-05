@@ -1,6 +1,6 @@
 import { AnimatePresence, motion } from "framer-motion";
 import { Brain, Cable, CheckCircle2, Eraser, Layers, MessageSquareText, Play, Square, StopCircle, Terminal, Wrench, XCircle } from "lucide-react";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { memo, useEffect, useMemo, useRef, useState } from "react";
 import { AiFace } from "./AiFace";
 import { useAi } from "../lib/ai";
 import type { AgentEvent } from "../lib/ai";
@@ -267,7 +267,10 @@ export function AgentActivity({ onBack }: { onBack?: () => void }) {
   );
 }
 
-function EventRow({ event }: { event: AgentEvent }) {
+/* Events are immutable once logged, so memoizing the row means a long live
+   session only re-renders the new tail instead of all ~400 trace rows on
+   every tool result — the trace stays smooth even mid-storm. */
+const EventRow = memo(function EventRow({ event }: { event: AgentEvent }) {
   if (event.kind === "tool-start") {
     return (
       <motion.div initial={{ opacity: 0, y: 4 }} animate={{ opacity: 1, y: 0 }} className="flex items-start gap-2.5 rounded-lg bg-white/[0.03] px-2.5 py-2">
@@ -350,7 +353,7 @@ function EventRow({ event }: { event: AgentEvent }) {
       <span className="shrink-0 text-[9.5px] text-frost-600">{timeOf(event.ts)}</span>
     </motion.div>
   );
-}
+});
 
 /* ------------------------------------------------------------------ */
 /* Live activity mini-panel — dockable in the chat sidebar             */

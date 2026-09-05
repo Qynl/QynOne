@@ -102,10 +102,80 @@ export function slugify(name: string): string {
   );
 }
 
+/** Deterministic per-server slugs — duplicate names get _2, _3 … suffixes so
+    every server's tools keep unique mcp_<slug>_<tool> function names. */
+export function engineSlugs(names: string[]): string[] {
+  const used = new Set<string>();
+  return names.map((name) => {
+    let s = slugify(name);
+    if (used.has(s)) {
+      const base = s;
+      let n = 2;
+      while (used.has(`${base}_${n}`)) n += 1;
+      s = `${base}_${n}`;
+    }
+    used.add(s);
+    return s;
+  });
+}
+
 /** Function names OpenAI-compatible endpoints accept. */
 export function mcpFunctionName(serverSlug: string, tool: string): string {
   const clean = tool.toLowerCase().replace(/[^a-z0-9_-]+/g, "_").replace(/^_+|_+$/g, "").slice(0, 48) || "tool";
   return `mcp_${serverSlug}_${clean}`;
+}
+
+/* ------------------------------------------------------------------ */
+/* JSON-schema minification — engine tool schemas ride on EVERY model  */
+/* call, so verbose annotations (markdownDescription, $schema, long     */
+/* prose, default/examples) tax every step of a long build. Everything */
+/* structurally meaningful is kept: types, properties, required,       */
+/* items, enums, combinators, constraints.                             */
+/* ------------------------------------------------------------------ */
+
+const SCHEMA_DROP_KEYS = new Set([
+  "$schema",
+  "title",
+  "default",
+  "examples",
+  "deprecated",
+  "readOnly",
+  "writeOnly",
+  "additionalProperties",
+  "markdownDescription",
+  "x-introspectable",
+  "$comment",
+]);
+
+const SCHEMA_DESC_MAX = 200;
+
+export function minifyJsonSchema(raw: unknown): Record<string, unknown> {
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return { type: "object" };
+  const out: Record<string, unknown> = {};
+  for (const [key, value] of Object.entries(raw as Record<string, unknown>)) {
+    if (SCHEMA_DROP_KEYS.has(key)) continue;
+    if (key === "description" && typeof value === "string") {
+      const d = value.trim().replace(/\s+/g, " ");
+      out[key] = d.length > SCHEMA_DESC_MAX ? `${d.slice(0, SCHEMA_DESC_MAX)}…` : d;
+      continue;
+    }
+    if ((key === "properties" || key === "definitions") && value && typeof value === "object" && !Array.isArray(value)) {
+      const props: Record<string, unknown> = {};
+      for (const [name, sub] of Object.entries(value as Record<string, unknown>)) props[name] = minifyJsonSchema(sub);
+      out[key] = props;
+      continue;
+    }
+    if (key === "items") {
+      out[key] = Array.isArray(value) ? value.map((item) => minifyJsonSchema(item)) : minifyJsonSchema(value);
+      continue;
+    }
+    if ((key === "oneOf" || key === "anyOf" || key === "allOf" || key === "prefixItems") && Array.isArray(value)) {
+      out[key] = value.map((item) => minifyJsonSchema(item));
+      continue;
+    }
+    out[key] = value;
+  }
+  return out;
 }
 
 export function McpProvider({ children }: { children: ReactNode }) {
@@ -229,9 +299,14 @@ export function McpProvider({ children }: { children: ReactNode }) {
 
   const tools = useMemo<McpTool[]>(() => {
     const out: McpTool[] = [];
-    for (const server of servers) {
-      if (server.state !== "connected") continue;
-      const serverSlug = slugify(server.name);
+    /* Two servers with the same name (e.g. two "Custom MCP" connections) would
+       otherwise collapse into one slug and produce duplicate mcp_<slug>_<tool>
+       function names — OpenAI-compatible endpoints reject duplicates and one
+       engine's tools silently shadow the other's. engineSlugs disambiguates. */
+    const connected = servers.filter((s) => s.state === "connected");
+    const slugs = engineSlugs(connected.map((s) => s.name));
+    connected.forEach((server, i) => {
+      const serverSlug = slugs[i] ?? slugify(server.name);
       for (const t of server.tools) {
         out.push({
           serverId: server.id,
@@ -241,11 +316,11 @@ export function McpProvider({ children }: { children: ReactNode }) {
           description: String(t.description || t.name).slice(0, 320),
           parameters:
             t.parameters && typeof t.parameters === "object" && (t.parameters as { type?: string }).type
-              ? t.parameters
+              ? minifyJsonSchema(t.parameters)
               : { type: "object", properties: {} },
         });
       }
-    }
+    });
     return out;
   }, [servers]);
 
