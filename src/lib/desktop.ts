@@ -5,6 +5,43 @@ export interface ShortcutHit {
   path: string;
 }
 
+/* ------------------------------------------------------------------ */
+/* Self-uninstall — whitelist-only cleanup of what QynOne created.      */
+/* The renderer never sends a path; it selects whole groups only.       */
+/* ------------------------------------------------------------------ */
+
+export type UninstallGroupId = "appData" | "vault" | "nexFolder" | "pictures" | "autostart";
+
+export interface UninstallGroup {
+  id: UninstallGroupId;
+  label: string;
+  /** absolute path — null for the autostart entry */
+  path: string | null;
+  exists: boolean;
+  size: number;
+  count: number;
+}
+
+export interface UninstallScanResult {
+  ok: boolean;
+  groups: UninstallGroup[];
+}
+
+export interface UninstallResult {
+  id: UninstallGroupId;
+  ok: boolean;
+  error?: string;
+  /** true when the group was intentionally kept (e.g. a custom Nex folder) */
+  kept?: boolean;
+  note?: string;
+}
+
+export interface UninstallRunResult {
+  ok: boolean;
+  results: UninstallResult[];
+  error?: string;
+}
+
 export interface SystemInfo {
   hostname: string;
   platform: string;
@@ -218,6 +255,11 @@ export interface DesktopBridge {
   /* Start with Windows — real per-user Run entry through the OS. */
   autostartGet: () => Promise<{ enabled: boolean; available: boolean }>;
   autostartSet: (enabled: boolean) => Promise<{ ok: boolean; enabled: boolean; error?: string }>;
+
+  /* Self-uninstall — whitelist-only cleanup of what QynOne created.
+     The renderer can only pick whole groups; it never sends a path. */
+  uninstallScan: () => Promise<UninstallScanResult>;
+  uninstallRun: (groupIds: UninstallGroupId[]) => Promise<UninstallRunResult>;
 
   /* Floating Nex — always-on-top companion window with just the eyes */
   floatToggle: () => Promise<{ open: boolean }>;

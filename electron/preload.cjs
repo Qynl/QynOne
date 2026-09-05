@@ -70,6 +70,11 @@ contextBridge.exposeInMainWorld("qynDesktop", {
   autostartGet: () => ipcRenderer.invoke("qyn:autostart-get"),
   autostartSet: (enabled) => ipcRenderer.invoke("qyn:autostart-set", enabled),
 
+  /* Self-uninstall — whitelist-only cleanup of the folders QynOne created.
+     The renderer can only pick whole groups; it never sends a path. */
+  uninstallScan: () => ipcRenderer.invoke("qyn:uninstall-scan"),
+  uninstallRun: (groupIds) => ipcRenderer.invoke("qyn:uninstall-run", groupIds),
+
   /* Floating Nex — always-on-top companion window with just the eyes */
   floatToggle: () => ipcRenderer.invoke("qyn:float-toggle"),
   floatState: () => ipcRenderer.invoke("qyn:float-state"),

@@ -5,12 +5,14 @@ import {
   Check,
   Database,
   Download,
+  HardDriveDownload,
   History,
   Palette,
   Plug,
   Plus,
   Power,
   RotateCcw,
+  ShieldCheck,
   SlidersHorizontal,
   Sparkles,
   SquarePen,
@@ -24,7 +26,7 @@ import { useEffect, useRef, useState } from "react";
 import { Avatar, SectionHeader, Toggle, useUi } from "../components/ui";
 import { listOllamaModels, PROVIDERS, useAi } from "../lib/ai";
 import { getDesktop, isDesktop } from "../lib/desktop";
-import type { McpServerConfig, McpServerStatus } from "../lib/desktop";
+import type { McpServerConfig, McpServerStatus, UninstallResult, UninstallScanResult } from "../lib/desktop";
 import { MCP_PRESETS, useMcp } from "../lib/mcp";
 import type { McpPreset } from "../lib/mcp";
 import { useQyn } from "../lib/store";
@@ -288,6 +290,9 @@ export function SettingsView({ onNavigate }: { onNavigate: (v: ViewId) => void }
             </div>
           </section>
 
+          {/* ---- Uninstall — remove QynOne and everything it created ---- */}
+          <UninstallSection onDone={() => toast("QynOne removed its files. You can now uninstall the program itself.")} />
+
           {/* ---- About ---- */}
           <section className="glass rounded-2xl p-5">
             <SectionHeader title="About QynOne" icon={<Sparkles size={13} className="text-accent" />} />
@@ -402,6 +407,226 @@ function SettingRow({
       </div>
       {children}
     </div>
+  );
+}
+
+/* ------------------------------------------------------------------ */
+/* Uninstall — safely remove QynOne and everything it created.         */
+/* The renderer never sends a path: the main process computes every    */
+/* target itself and refuses protected locations, so this can only     */
+/* ever touch QynOne's own folders.                                    */
+/* ------------------------------------------------------------------ */
+
+function UninstallSection({ onDone }: { onDone: () => void }) {
+  const bridge = getDesktop();
+  const [scan, setScan] = useState<UninstallScanResult | null>(null);
+  const [selected, setSelected] = useState<Record<string, boolean>>({});
+  const [phase, setPhase] = useState<"idle" | "confirm" | "running" | "done">("idle");
+  const [results, setResults] = useState<UninstallResult[]>([]);
+
+  useEffect(() => {
+    if (!bridge) return;
+    let alive = true;
+    bridge
+      .uninstallScan()
+      .then((r) => {
+        if (!alive) return;
+        setScan(r);
+        /* Pre-select only what actually exists on this PC, so the count and
+           the deletion are honest — a group that isn't present starts off. */
+        const preset: Record<string, boolean> = {};
+        for (const g of r.groups) preset[g.id] = g.exists;
+        setSelected(preset);
+      })
+      .catch(() => {
+        if (alive) setScan({ ok: false, groups: [] });
+      });
+    return () => {
+      alive = false;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  if (!bridge) return null; // web preview — nothing to uninstall from
+
+  const groups = scan?.groups ?? [];
+  const anyExists = groups.some((g) => g.exists);
+  const selectedIds = groups.filter((g) => selected[g.id]).map((g) => g.id);
+
+  async function runUninstall() {
+    setPhase("running");
+    try {
+      const res = await bridge!.uninstallRun(selectedIds);
+      setResults(res.results ?? []);
+      setPhase("done");
+      if (res.ok) onDone();
+    } catch {
+      setPhase("done");
+    }
+  }
+
+  const fmtSize = (n: number) => {
+    if (n >= 1024 * 1024 * 1024) return `${(n / (1024 * 1024 * 1024)).toFixed(1)} GB`;
+    if (n >= 1024 * 1024) return `${(n / (1024 * 1024)).toFixed(1)} MB`;
+    if (n >= 1024) return `${(n / 1024).toFixed(0)} KB`;
+    return `${n} B`;
+  };
+
+  return (
+    <section className="glass rounded-2xl p-5">
+      <SectionHeader title="Remove QynOne from this PC" icon={<HardDriveDownload size={13} className="text-accent" />} />
+      <p className="text-[12.5px] leading-relaxed text-frost-500">
+        QynOne knows every file and folder it created on your PC. This removes exactly those — the saved environment,
+        the vault, the Nex folder, screenshots and the startup entry — and <em>nothing else</em>. Your installed
+        programs, Documents, Pictures and every other folder stay untouched. The program files themselves are removed
+        through Windows' own “Installed apps” afterwards.
+      </p>
+
+      {phase === "idle" && (
+        <div className="mt-4 flex items-center gap-3">
+          <button
+            onClick={() => setPhase("confirm")}
+            disabled={!anyExists && !groups.some((g) => g.id === "autostart" && g.exists)}
+            className="inline-flex h-9 items-center gap-2 rounded-xl border border-red-400/20 bg-red-400/8 px-3.5 text-[12.5px] font-medium text-red-200 transition hover:border-red-400/40 hover:bg-red-400/14 disabled:cursor-not-allowed disabled:opacity-40"
+          >
+            <Trash2 size={13} /> Remove QynOne data…
+          </button>
+          {scan && !anyExists && (
+            <span className="text-[12px] text-frost-500">Nothing found on this PC — QynOne is already clean.</span>
+          )}
+          {!scan && <span className="text-[12px] text-frost-500">Checking what QynOne created here…</span>}
+        </div>
+      )}
+
+      {phase === "confirm" && (
+        <div className="mt-4 rounded-2xl border border-red-400/20 bg-red-400/[0.04] p-4">
+          <div className="flex items-start gap-2.5">
+            <AlertTriangle size={15} className="mt-0.5 shrink-0 text-amber-300" />
+            <div className="min-w-0">
+              <p className="text-[13px] font-semibold text-frost-100">Choose exactly what to remove</p>
+              <p className="mt-0.5 text-[12px] leading-relaxed text-frost-400">
+                Everything unchecked stays on your PC. QynOne deletes only its own paths — it cannot select, reach or
+                remove anything else.
+              </p>
+            </div>
+          </div>
+          <div className="mt-3 space-y-2">
+            {groups.map((g) => (
+              <label
+                key={g.id}
+                className={cn(
+                  "flex cursor-pointer items-start gap-3 rounded-xl border px-3.5 py-3 transition",
+                  selected[g.id] ? "border-red-400/30 bg-red-400/[0.06]" : "border-white/8 bg-white/[0.02] hover:bg-white/[0.05]",
+                  !g.exists && "opacity-50",
+                )}
+              >
+                <input
+                  type="checkbox"
+                  checked={Boolean(selected[g.id])}
+                  disabled={!g.exists}
+                  onChange={(e) => setSelected((s) => ({ ...s, [g.id]: e.target.checked }))}
+                  className="mt-0.5 h-4 w-4 shrink-0 accent-red-400"
+                />
+                <div className="min-w-0 flex-1">
+                  <div className="flex items-baseline justify-between gap-2">
+                    <p className="text-[12.5px] font-medium text-frost-100">{g.label}</p>
+                    {g.path && g.exists && (
+                      <span className="shrink-0 text-[10.5px] text-frost-500">
+                        {fmtSize(g.size)} · {g.count} item{g.count === 1 ? "" : "s"}
+                      </span>
+                    )}
+                  </div>
+                  {g.path && <p className="mt-0.5 truncate font-mono text-[10.5px] text-frost-500/80">{g.path}</p>}
+                  {!g.exists && <p className="mt-0.5 text-[11px] text-frost-500">Not present on this PC.</p>}
+                </div>
+              </label>
+            ))}
+          </div>
+          <div className="mt-4 flex flex-wrap items-center justify-end gap-2">
+            <button
+              onClick={() => setPhase("idle")}
+              className="h-9 rounded-xl border border-white/10 bg-white/5 px-3.5 text-[12px] font-medium text-frost-400 transition hover:bg-white/10 hover:text-frost-200"
+            >
+              Cancel
+            </button>
+            <button
+              onClick={() => void runUninstall()}
+              disabled={selectedIds.length === 0}
+              className="inline-flex h-9 items-center gap-2 rounded-xl bg-red-500/85 px-4 text-[12.5px] font-semibold text-white shadow-[0_8px_20px_-8px_rgba(244,63,94,0.5)] transition hover:bg-red-500 active:scale-[0.98] disabled:cursor-not-allowed disabled:opacity-40"
+            >
+              <Trash2 size={13} /> Delete selected ({selectedIds.length})
+            </button>
+          </div>
+        </div>
+      )}
+
+      {phase === "running" && (
+        <div className="mt-4 flex items-center gap-3 rounded-2xl border border-white/8 bg-white/[0.03] px-4 py-3.5">
+          <span className="h-3.5 w-3.5 animate-spin rounded-full border-2 border-white/15 border-t-white/70" />
+          <p className="text-[12.5px] text-frost-300">Removing QynOne's files…</p>
+        </div>
+      )}
+
+      {phase === "done" && (
+        <div className="mt-4 rounded-2xl border border-white/8 bg-white/[0.03] p-4">
+          <div className="flex items-start gap-2.5">
+            <ShieldCheck size={15} className="mt-0.5 shrink-0 text-emerald-300" />
+            <div className="min-w-0">
+              <p className="text-[13px] font-semibold text-frost-100">Finished</p>
+              <p className="mt-0.5 text-[12px] leading-relaxed text-frost-400">
+                {results.every((r) => r.ok) ? "Everything selected was removed." : "Some items couldn't be removed:"}
+              </p>
+            </div>
+          </div>
+          <div className="mt-3 space-y-1.5">
+            {results.map((r) => {
+              const g = groups.find((x) => x.id === r.id);
+              return (
+                <div key={r.id} className="flex items-start gap-2 rounded-lg bg-black/20 px-3 py-2">
+                  {r.ok ? (
+                    <Check size={13} className="mt-0.5 shrink-0 text-emerald-300" />
+                  ) : (
+                    <X size={13} className="mt-0.5 shrink-0 text-rose-300" />
+                  )}
+                  <div className="min-w-0">
+                    <p className="text-[12px] font-medium text-frost-200">{g?.label ?? r.id}</p>
+                    {r.note && <p className="text-[11px] text-frost-500">{r.note}</p>}
+                    {r.error && <p className="text-[11px] text-rose-300/80">{r.error}</p>}
+                  </div>
+                </div>
+                );
+            })}
+          </div>
+          <p className="mt-3 border-t border-white/6 pt-3 text-[11px] leading-relaxed text-frost-500">
+            Last step: open Windows Settings → Apps → Installed apps → QynOne → Uninstall. That removes the program
+            files, shortcuts and the uninstall entry — the data cleanup above already did the rest.
+          </p>
+          <div className="mt-3 flex justify-end">
+            <button
+              onClick={() => {
+                setPhase("idle");
+                setResults([]);
+                bridge
+                  .uninstallScan()
+                  .then(setScan)
+                  .catch(() => {});
+              }}
+              className="h-9 rounded-xl border border-white/10 bg-white/5 px-3.5 text-[12px] font-medium text-frost-400 transition hover:bg-white/10 hover:text-frost-200"
+            >
+              Rescan
+            </button>
+          </div>
+        </div>
+      )}
+
+      <p className="mt-4 border-t border-white/6 pt-3 text-[11px] leading-relaxed text-frost-500">
+        <span className="font-medium text-frost-400">Safety guarantees:</span> the list of removable locations is
+        computed by QynOne itself from the folders it actually created — the interface can only switch whole groups on
+        or off, never pick a different path. Drive roots, your user profile, Documents, Pictures and AppData are
+        protected and can never be deleted by this tool. A custom Nex folder under a name that doesn't start with
+        “QynOne” is reported and kept rather than deleted.
+      </p>
+    </section>
   );
 }
 

@@ -1101,6 +1101,192 @@ function autostartState() {
   }
 }
 
+/* ------------------------------------------------------------------ */
+/* Self-uninstall — a whitelist-only cleanup the user runs from        */
+/* Settings. QynOne knows every path it ever created, and deletes      */
+/* exactly those — never anything else on the PC.                      */
+/*                                                                     */
+/* Safety design:                                                      */
+/*  - The renderer NEVER sends a path. It sends only group ids         */
+/*    ("appData", "vault", "nexFolder", "pictures", "autostart").     */
+/*  - Every path is computed here, from Electron's own app.getPath.    */
+/*  - A hard guard refuses to delete anything that is a drive root or  */
+/*    the Documents/Pictures/home/AppData folder itself.               */
+/*  - Custom Nex folders are only removed when their name starts       */
+/*    with "QynOne" (the app's own naming) — a folder the user picked  */
+/*    under a different name is reported as "kept (custom name)".      */
+/* ------------------------------------------------------------------ */
+
+const UNINSTALL_GROUPS = ["appData", "vault", "nexFolder", "pictures", "autostart"];
+
+/** A path QynOne refuses to delete, ever — this is the safety floor. */
+function isProtectedPath(p) {
+  if (typeof p !== "string" || !p.trim()) return true;
+  const resolved = path.resolve(p);
+  const parsed = path.parse(resolved);
+  if (resolved === parsed.root) return true; // drive root (C:\)
+  /* Generic locations that must never be a delete target. userData is NOT
+     here on purpose: the only group that can ever name it is "appData",
+     whose path is computed from getPath("userData") itself — never from
+     renderer input. Everything else (nex folder etc.) stays guarded, so a
+     custom Nex folder can never secretly be one of these. */
+  const guard = [
+    app.getPath("home"),
+    app.getPath("documents"),
+    app.getPath("pictures"),
+    app.getPath("appData"),
+  ];
+  for (const g of guard) {
+    if (path.resolve(g).toLowerCase() === resolved.toLowerCase()) return true;
+  }
+  return false;
+}
+
+/** Compute every QynOne-created path for a group. Returns null when the group
+ *  does not exist on this PC (or is dev-only), so the UI can show it as such. */
+async function uninstallTarget(group) {
+  switch (group) {
+    case "appData":
+      return { path: app.getPath("userData"), label: "%APPDATA%\\QynOne — your saved environment, AI settings & MCP connections" };
+    case "vault":
+      return { path: vaultRoot(), label: "Documents\\QynOneVault — your Markdown vault" };
+    case "nexFolder": {
+      const info = await nexInfo();
+      return { path: path.resolve(info.root), label: info.custom
+        ? "Your custom Nex folder — " + info.root
+        : "Documents\\QynOneNex — Nex's own folder (briefs, plans, memory)" };
+    }
+    case "pictures":
+      return { path: path.join(app.getPath("pictures"), "QynOne"), label: "Pictures\\QynOne — screenshots taken with Nex" };
+    case "autostart":
+      return { path: null, label: "Start with Windows — the per-user login entry" };
+    default:
+      return null;
+  }
+}
+
+ipcMain.handle("qyn:uninstall-scan", async () => {
+  const groups = [];
+  for (const group of UNINSTALL_GROUPS) {
+    const target = await uninstallTarget(group);
+    if (!target) continue;
+    const protectedHit = target.path ? isProtectedPath(target.path) : false;
+    if (protectedHit) continue; // never offer a protected path
+    if (target.path) {
+      let exists = false;
+      let size = 0;
+      let count = 0;
+      try {
+        const st = await fsPromises.stat(target.path);
+        exists = st.isDirectory();
+        if (exists) {
+          const walk = async (dir, depth) => {
+            if (depth > 8 || count >= 20000) return;
+            let list = [];
+            try {
+              list = await fsPromises.readdir(dir, { withFileTypes: true });
+            } catch {
+              return;
+            }
+            for (const e of list) {
+              if (count >= 20000) return;
+              const full = path.join(dir, e.name);
+              try {
+                if (e.isDirectory()) {
+                  count += 1;
+                  await walk(full, depth + 1);
+                } else {
+                  count += 1;
+                  const fst = await fsPromises.stat(full);
+                  size += fst.size;
+                }
+              } catch {
+                // unreadable entry — still counts, unknown size
+                count += 1;
+              }
+            }
+          };
+          await walk(target.path, 0);
+        }
+      } catch {
+        exists = false;
+      }
+      groups.push({
+        id: group,
+        label: target.label,
+        path: target.path,
+        exists,
+        size,
+        count,
+      });
+    } else {
+      // autostart — reported, not sized
+      const s = autostartState();
+      groups.push({
+        id: group,
+        label: target.label,
+        path: null,
+        exists: s.enabled,
+        size: 0,
+        count: 0,
+      });
+    }
+  }
+  return { ok: true, groups };
+});
+
+ipcMain.handle("qyn:uninstall-run", async (_event, groupIds) => {
+  const ids = Array.isArray(groupIds) ? groupIds.filter((g) => UNINSTALL_GROUPS.includes(g)) : [];
+  if (ids.length === 0) return { ok: false, error: "Nothing selected to remove." };
+  const results = [];
+  /* Resolve EVERY target before deleting anything: deleting %APPDATA%\QynOne
+     also deletes the Nex-folder config, and resolving afterwards would
+     silently fall back to the default root and strand a custom folder. */
+  const targets = new Map();
+  for (const group of ids) {
+    if (group === "autostart") continue;
+    const target = await uninstallTarget(group);
+    targets.set(group, target);
+  }
+  /* Autostart first so the app never relaunches mid-cleanup. */
+  const ordered = ["autostart", "nexFolder", "appData", "vault", "pictures"].filter((g) => ids.includes(g));
+  for (const group of ordered) {
+    try {
+      if (group === "autostart") {
+        if (!IS_DEV) app.setLoginItemSettings({ openAtLogin: false });
+        const after = autostartState();
+        results.push({ id: group, ok: !after.enabled, error: after.enabled ? "couldn't remove the startup entry" : undefined });
+        continue;
+      }
+      const target = targets.get(group);
+      if (!target || !target.path) {
+        results.push({ id: group, ok: false, error: "unknown group" });
+        continue;
+      }
+      const resolved = path.resolve(target.path);
+      if (isProtectedPath(resolved)) {
+        results.push({ id: group, ok: false, error: "refused: protected path" });
+        continue;
+      }
+      /* Custom Nex folders are only removed when the folder name starts with
+         "QynOne" — a folder the user chose under another name is kept, since
+         QynOne can't know what else lives in it. */
+      if (group === "nexFolder") {
+        const info = await nexInfo();
+        if (info.custom && !path.basename(resolved).toLowerCase().startsWith("qynone")) {
+          results.push({ id: group, ok: true, kept: true, note: "kept — custom folder name (delete it yourself if you want it gone)" });
+          continue;
+        }
+      }
+      await fsPromises.rm(resolved, { recursive: true, force: true });
+      results.push({ id: group, ok: true });
+    } catch (e) {
+      results.push({ id: group, ok: false, error: String((e && e.message) || e) });
+    }
+  }
+  return { ok: results.every((r) => r.ok), results };
+});
+
 ipcMain.handle("qyn:autostart-get", () => autostartState());
 
 ipcMain.handle("qyn:autostart-set", (_event, enabled) => {
