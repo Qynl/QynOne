@@ -4,16 +4,13 @@ import { getDesktop, isFloatMode } from "./desktop";
 import type { AiConfig } from "./desktop";
 import { mcpFunctionName, useMcp } from "./mcp";
 import { NEX_MAX_MD, chatFileNameFor, describeEntry, fmtBytes, nexFolderDelete, nexFolderList, nexFolderRead, nexFolderReveal, nexFolderWrite } from "./nexfolder";
-import { apiContentFor, extractVisionData, hasImages, stripImagesFromMessages, VISION_MARKER, visionEnabled } from "./vision";
+import { apiContentFor, extractVisionData, hasImages, stripImagesFromMessages, visionEnabled } from "./vision";
 import { useNexEmotions } from "./emotion";
 import type { EmotionDebug, NexEvent } from "./emotion";
 import { clearNowPlaying, playOnAmazonMusic, setNowPlaying } from "./music";
 import systemPromptMd from "../system-prompt.md?raw";
 import { useQyn } from "./store";
-import { useStats } from "./stats";
-import { useSystemInfo } from "./system";
 import { useVault } from "./vault";
-import { useLaunch } from "../components/ui";
 import { useMemory, MEMORY_PATH, renderMemory } from "./memory";
 import type { MemoryEntry, MemoryKind } from "./memory";
 import { MEMORY_COMPACT_AT, MEMORY_MAX_CHARS, NOTE_MAX_CHARS, VAULT_MAX_NOTES } from "./limits";
@@ -580,12 +577,6 @@ export function AiProvider({
   const vault = useVault();
   const memory = useMemory();
   const mcp = useMcp();
-  const launch = useLaunch();
-  const stats = useStats();
-  const sys = useSystemInfo();
-
-  const statsRef = useRef({ stats, sys });
-  statsRef.current = { stats, sys };
   /* Live names of the connected engines, read by the gda-start tool. */
   const connectedEnginesRef = useRef<string[]>([]);
   connectedEnginesRef.current = mcp.servers.filter((s) => s.state === "connected").map((s) => s.name);
@@ -1128,21 +1119,9 @@ export function AiProvider({
 
   const tools = useMemo<AiToolDef[]>(() => {
     const userNotes = vault.notes.filter((n) => !n.folder.startsWith("_"));
-    const findApp = (query: string) => {
-      const q = query.trim().toLowerCase();
-      return (
-        state.apps.find(
-          (a) => a.name.toLowerCase() === q || a.name.toLowerCase().includes(q) || a.tags.some((t) => t.toLowerCase().includes(q)),
-        ) ?? null
-      );
-    };
     const findFolder = (query: string) => {
       const q = query.trim().toLowerCase();
       return state.folders.find((f) => f.name.toLowerCase().includes(q)) ?? null;
-    };
-    const findWorkspace = (query: string) => {
-      const q = query.trim().toLowerCase();
-      return state.workspaces.find((w) => w.name.toLowerCase().includes(q)) ?? null;
     };
 
     return [
@@ -1164,22 +1143,6 @@ export function AiProvider({
         },
       },
       {
-        name: "launch",
-        usage: "/launch <app name>",
-        description: "Launch a real application (or game) by name.",
-        parameters: {
-          type: "object",
-          properties: { query: { type: "string", description: "app name, e.g. VS Code or Minecraft" } },
-          required: ["query"],
-        },
-        run: (args) => {
-          const app = findApp(String(args.query ?? ""));
-          if (!app) return `No application matching "${args.query}" found. Use list_apps to see what's available.`;
-          launch(app);
-          return `Launched ${app.name}.`;
-        },
-      },
-      {
         name: "open-folder",
         usage: "/open-folder <folder name>",
         description: "Open a virtual folder by name.",
@@ -1193,23 +1156,6 @@ export function AiProvider({
           if (!folder) return `No folder named "${args.query}" found.`;
           onOpenFolder(folder.id);
           return `Opened folder ${folder.name}.`;
-        },
-      },
-      {
-        name: "open-workspace",
-        usage: "/open-workspace <workspace name>",
-        description: "Launch every application in a workspace at once.",
-        parameters: {
-          type: "object",
-          properties: { query: { type: "string", description: "workspace name" } },
-          required: ["query"],
-        },
-        run: (args) => {
-          const ws = findWorkspace(String(args.query ?? ""));
-          if (!ws) return `No workspace named "${args.query}" found.`;
-          const apps = ws.itemIds.map((id) => state.apps.find((a) => a.id === id)).filter(Boolean);
-          apps.forEach((app, i) => window.setTimeout(() => launch(app!), i * 450));
-          return `Launched workspace ${ws.name} with ${apps.length} apps.`;
         },
       },
       {
@@ -1241,21 +1187,6 @@ export function AiProvider({
           state.workspaces.length === 0
             ? "No workspaces yet."
             : state.workspaces.map((w) => `${w.name} (${w.itemIds.length} apps)`).join(", "),
-      },
-      {
-        name: "system",
-        usage: "/system",
-        description: "Get live PC info: CPU, memory, uptime, hardware.",
-        parameters: { type: "object", properties: {} },
-        run: () => {
-          const s = statsRef.current.stats;
-          const i = statsRef.current.sys;
-          if (!s) {
-            return `No live readings available in this preview — in the installed app I read CPU, memory and uptime straight from this PC. Machine: ${i.os}, ${i.cores} cores${i.cpuModel ? `, ${i.cpuModel}` : ""}.`;
-          }
-          const memPct = Math.round((s.memUsedBytes / s.memTotalBytes) * 100);
-          return `CPU ${s.cpuPct}%, memory ${memPct}% (${Math.round(s.memTotalBytes / 2 ** 30)} GB total), uptime ${Math.floor(s.uptimeSec / 3600)}h, OS ${i.os}, ${i.cores} cores${i.cpuModel ? `, ${i.cpuModel}` : ""}.`;
-        },
       },
       {
         name: "create-note",
@@ -1556,23 +1487,6 @@ export function AiProvider({
         run: () => {
           onNavigate("calendar");
           return "Opened the calendar.";
-        },
-      },
-      {
-        name: "screenshot",
-        usage: "/screenshot",
-        description: "Take a screenshot of the screen and save it to the Pictures\\QynOne folder.",
-        parameters: { type: "object", properties: {} },
-        run: async () => {
-          const bridge = getDesktop();
-          if (!bridge) return "Screenshots need the QynOne desktop app — this preview can't capture the screen.";
-          const cap = await bridge.captureScreen();
-          if (!cap) return "I couldn't capture the screen right now.";
-          const res = await bridge.saveScreenshot(cap);
-          const saved = res.ok
-            ? `Saved a screenshot${res.path ? ` to ${res.path}` : ""}. `
-            : `Screen capture worked but saving to Pictures failed (${res.error ?? "unknown error"}). `;
-          return `${saved}${visionEnabled(configRef.current) ? "Here's what I see:\n" : ""}${VISION_MARKER}${cap}`;
         },
       },
       {
@@ -1950,7 +1864,7 @@ export function AiProvider({
         },
       },
     ];
-  }, [state, vault, memory, launch, onNavigate, onOpenFolder, onOpenNote, actions, logActivity, updateGda]);
+  }, [state, vault, memory, onNavigate, onOpenFolder, onOpenNote, actions, logActivity, updateGda]);
 
   /* MCP engines (Roblox Studio, Unreal Engine, …) — every tool a connected
      engine advertises becomes a real function the model can call. The run

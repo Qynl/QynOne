@@ -20,14 +20,19 @@ export function FolderCard({
 
   return (
     <motion.button
-      initial={motionEnabled ? { opacity: 0, y: 14 } : false}
-      animate={{ opacity: 1, y: 0 }}
-      transition={{ duration: 0.35, delay, ease: [0.22, 1, 0.36, 1] }}
-      whileHover={motionEnabled ? { y: -4 } : undefined}
+      initial={motionEnabled ? { opacity: 0, y: 14, scale: 0.98 } : false}
+      animate={{ opacity: 1, y: 0, scale: 1 }}
+      transition={{ duration: 0.38, delay, ease: [0.22, 1, 0.36, 1] }}
+      whileHover={
+        motionEnabled
+          ? { y: -4, scale: 1.012, transition: { duration: 0.18, ease: "easeOut" } }
+          : undefined
+      }
+      whileTap={motionEnabled ? { scale: 0.985, transition: { duration: 0.1 } } : undefined}
       onClick={onOpen}
       className={cn(
-        "glass-soft group w-full rounded-2xl p-4 text-left transition-colors duration-200",
-        "hover:border-[color-mix(in_srgb,var(--accent)_30%,transparent)] hover:shadow-[0_16px_44px_-18px_var(--accent-glow)]",
+        "glass-soft group w-full rounded-2xl p-4 text-left transition-[border-color,box-shadow,background-color] duration-300 ease-out",
+        "hover:border-[color-mix(in_srgb,var(--accent)_30%,transparent)] hover:shadow-[0_18px_48px_-18px_var(--accent-glow)]",
       )}
     >
       <div className="flex items-start justify-between">

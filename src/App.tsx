@@ -1,4 +1,4 @@
-import { AnimatePresence, motion } from "framer-motion";
+import { AnimatePresence, MotionConfig, motion } from "framer-motion";
 import {
   Activity,
   BookOpen,
@@ -142,8 +142,9 @@ function Shell() {
   };
 
   return (
-    <McpProvider>
-      <AiProvider onNavigate={(v) => navigate(v as ViewId)} onOpenFolder={openFolder} onOpenNote={openVaultNote}>
+    <MotionConfig reducedMotion="user">
+      <McpProvider>
+        <AiProvider onNavigate={(v) => navigate(v as ViewId)} onOpenFolder={openFolder} onOpenNote={openVaultNote}>
         {/* Loading screen — the only pre-app screen. It unmounts the moment
             the bar is full, so Home is simply there. */}
         {phase === "boot" && <BootScreen />}
@@ -153,12 +154,19 @@ function Shell() {
           <div className="relative z-10 flex h-full min-h-0 flex-col">
             <TopBar onOpenPalette={() => setPaletteOpen(true)} onHome={() => navigate("home")} />
 
-            {/* Views transition softly between each other */}
+            {/* Views transition softly between each other — the outgoing view
+                lifts away while the incoming one settles in, so switching
+                never feels like a hard cut. */}
             <AnimatePresence mode="wait" initial={false}>
               <motion.div
                 key={`${view}-${view === "folders" ? (folderId ?? "all") : view === "vault" ? (vaultOpen ?? "none") : "view"}`}
-                exit={{ opacity: 0, y: -8 }}
-                transition={{ duration: 0.16, ease: [0.22, 1, 0.36, 1] }}
+                initial={{ opacity: 0, y: 16 }}
+                animate={{ opacity: 1, y: 0 }}
+                exit={{ opacity: 0, y: -10 }}
+                transition={{
+                  opacity: { duration: 0.22, ease: "easeOut" },
+                  y: { duration: 0.3, ease: [0.22, 1, 0.36, 1] },
+                }}
                 className="accent-scroll min-h-0 min-w-0 flex-1 overflow-y-auto"
               >
                 {renderView()}
@@ -185,8 +193,9 @@ function Shell() {
             )}
           </AnimatePresence>
         </div>
-      </AiProvider>
-    </McpProvider>
+        </AiProvider>
+      </McpProvider>
+    </MotionConfig>
   );
 }
 
@@ -226,7 +235,11 @@ function BottomDock({ view, onNavigate }: { view: ViewId; onNavigate: (v: ViewId
             )}
           >
             {active && (
-              <motion.span layoutId="dock-active" className="absolute top-0 h-[2px] w-6 rounded-full bg-[var(--accent)]" />
+              <motion.span
+                layoutId="dock-active"
+                transition={{ type: "spring", stiffness: 480, damping: 38 }}
+                className="absolute top-0 h-[2px] w-6 rounded-full bg-[var(--accent)]"
+              />
             )}
             <Icon size={19} strokeWidth={active ? 2.2 : 1.7} className={active ? "text-accent drop-shadow-[0_0_10px_var(--accent-glow)]" : ""} />
             <span className={cn("text-[9px] font-medium leading-none", active ? "font-semibold text-frost-100" : "")}>{item.label}</span>

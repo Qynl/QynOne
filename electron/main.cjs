@@ -1372,12 +1372,12 @@ function mcpBroadcast() {
 
 function mcpEnsureRuntime(config) {
   let runtime = mcpRuntimes.get(config.id);
-  if (!runtime || runtime.state === "error") {
-    if (runtime) {
-      runtime.stop().catch(() => {});
-      mcpRuntimes.delete(config.id);
-    }
+  if (!runtime) {
     runtime = createMcpRuntime(config);
+    /* Auto-reconnect flips state on a background timer; without this hook the
+       UI (and the AI's engine list) would stay stale until some other event
+       triggered a broadcast. */
+    runtime.onStateChange = () => mcpBroadcast();
     mcpRuntimes.set(config.id, runtime);
   }
   return runtime;
@@ -1413,7 +1413,7 @@ function isConnectionFailure(message) {
 
 async function mcpCall(id, toolName, args) {
   const config = mcpConfig(id);
-  if (!config) return { ok: false, error: "Unknown connection." };
+  if (!config) return { ok: false, error: `Unknown MCP connection "${id}" — it may have been removed in Settings → Connections.` };
   const runtime = mcpEnsureRuntime(config);
   let stateChanged = false;
   try {
@@ -1425,14 +1425,14 @@ async function mcpCall(id, toolName, args) {
     if (stateChanged) mcpBroadcast();
     return { ok: true, result };
   } catch (e) {
-    const message = String((e && e.message) || e);
+    let message = String((e && e.message) || e);
     if (isConnectionFailure(message) && mcpRuntimes.get(id)) {
       mcpRuntimes.delete(id); // next attempt restarts cleanly
       runtime.stop().catch(() => {});
     }
+    if (/not connected/i.test(message)) message = `${config.name} is offline — open the engine with its MCP server enabled, then press Connect (Settings → Connections).`;
     mcpBroadcast();
-    return { ok: false, error: message };
-  }
+    return { ok: false, error: `${config.name}: ${message}` };
 }
 
 ipcMain.handle("qyn:mcp-list", async () => mcpStatuses());

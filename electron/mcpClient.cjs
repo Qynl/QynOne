@@ -105,6 +105,9 @@ function newId() {
 /* ------------------------------------------------------------------ */
 
 function createMcpRuntime(cfg) {
+  const RECONNECT_MAX = 3;
+  const RECONNECT_DELAY_MS = 8000;
+
   const runtime = {
     id: cfg.id,
     state: "idle", // idle | connecting | connected | error
@@ -118,7 +121,10 @@ function createMcpRuntime(cfg) {
     startAttempt: null,
     pending: new Map(),
     nextId: 1,
-    serial: Promise.resolve(), // Unreal MCP serializes tool calls on the game thread
+    onStateChange: null, // main process hooks this to broadcast status to the UI
+    reconnectTimer: null,
+    reconnectAttempts: 0,
+    serial: cfg.transport === "http" ? Promise.resolve() : null, // http engines (Unreal MCP) serialize; stdio (Roblox) runs parallel
   };
 
   function snapshot() {
@@ -147,6 +153,39 @@ function createMcpRuntime(cfg) {
     runtime.state = state;
     runtime.error = error || "";
     if (state === "error") logPush(runtime, `error: ${error || "unknown"}`);
+    if (runtime.onStateChange) {
+      try {
+        runtime.onStateChange();
+      } catch {
+        // never let a UI callback break the connection
+      }
+    }
+  }
+
+  /* Engines die for normal reasons: Studio restarts, the editor reloads, the
+     MCP plugin hiccups. Instead of leaving a dead connection until the user
+     presses Connect again, retry a few times with a delay. Bounded: three
+     attempts per incident, reset on success. */
+  function scheduleReconnect(reason) {
+    if (runtime.disposed || cfg.autoConnect === false) return;
+    if (runtime.reconnectAttempts >= RECONNECT_MAX) return;
+    if (runtime.reconnectTimer) return;
+    runtime.reconnectAttempts += 1;
+    logPush(runtime, `auto-reconnect ${runtime.reconnectAttempts}/${RECONNECT_MAX} in ${RECONNECT_DELAY_MS / 1000}s (${reason})`);
+    runtime.reconnectTimer = setTimeout(() => {
+      runtime.reconnectTimer = null;
+      if (runtime.disposed) return;
+      runtime.start().catch(() => {
+        // start() already set state=error; a further retry is scheduled by the next failure
+      });
+    }, RECONNECT_DELAY_MS);
+  }
+
+  function cancelReconnect() {
+    if (runtime.reconnectTimer) {
+      clearTimeout(runtime.reconnectTimer);
+      runtime.reconnectTimer = null;
+    }
   }
 
   /* ----------------------------- pending requests ------------------ */
@@ -174,6 +213,13 @@ function createMcpRuntime(cfg) {
       throw new Error(`Could not start "${command}": ${(e && e.message) || e}`);
     }
     runtime.child = child;
+    /* An engine dying mid-write surfaces as an async EPIPE on stdin — without
+       this handler it would crash the whole main process. */
+    if (child.stdin) {
+      child.stdin.on("error", (err) => {
+        logPush(runtime, `stdin: ${String((err && err.code) || err).slice(0, 120)}`);
+      });
+    }
     const rl = readline.createInterface({ input: child.stdout });
     rl.on("line", (line) => {
       const trimmed = line.trim();
@@ -205,13 +251,12 @@ function createMcpRuntime(cfg) {
     });
     const fail = (what) => {
       if (runtime.disposed) return;
-      const wasConnected = runtime.state === "connected";
       setState("error", what);
       logPush(runtime, what);
       settlePending(what);
       runtime.child = null;
       if (!runtime.disposed) runtime.transport = null;
-      void wasConnected; // caller (main) observes state via snapshot
+      scheduleReconnect("engine connection lost");
     };
     child.once("error", (err) => fail(`Could not launch ${command}: ${err.code || err.message}`));
     child.once("exit", (code, signal) => {
@@ -374,11 +419,13 @@ function createMcpRuntime(cfg) {
           cursor = list.nextCursor;
         } while (cursor);
         setState("connected");
+        runtime.reconnectAttempts = 0;
         logPush(runtime, `${runtime.tools.length} tool${runtime.tools.length === 1 ? "" : "s"} available`);
         return snapshot();
       } catch (e) {
         setState("error", (e && e.message) || String(e));
         stopProcess();
+        if (!runtime.disposed) scheduleReconnect("connect failed");
         throw new Error(runtime.error);
       } finally {
         runtime.startAttempt = null;
@@ -401,6 +448,7 @@ function createMcpRuntime(cfg) {
 
   async function stop() {
     runtime.disposed = true;
+    cancelReconnect();
     stopProcess();
   }
 
@@ -422,9 +470,12 @@ function createMcpRuntime(cfg) {
         if (result.result !== undefined) return typeof result.result === "string" ? result.result : JSON.stringify(result.result);
         return JSON.stringify(result).slice(0, 4000) || "(no result)";
       });
-    // serialize tool calls per engine (Unreal MCP requires this)
-    const p = runtime.serial.then(run, run);
-    runtime.serial = p.catch(() => {});
+    // Serialize only when the server asks for it (some HTTP engines, e.g.
+    // Unreal MCP, require one call at a time on the game thread). stdio
+    // engines like Roblox Studio handle parallel calls fine — running them
+    // concurrently cuts real wait time for independent reads and edits.
+    const p = runtime.serial ? runtime.serial.then(run, run) : run();
+    if (runtime.serial) runtime.serial = p.catch(() => {});
     return p;
   }
 

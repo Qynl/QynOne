@@ -28,6 +28,25 @@
   --accent-glow: rgba(217, 224, 232, 0.16);
   --wallpaper-1: #171a1f;
   --wallpaper-2: #070809;
+
+  /* Motion tokens — one springy ease for entrances/lifts, one soft ease for
+     exits. Keep durations short: glass UI feels alive when it responds fast
+     and settles gently, never when it lingers. */
+  --ease-spring: cubic-bezier(0.22, 1, 0.36, 1);
+  --ease-soft: cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+/* Users who ask the OS for less motion get a calmer QynOne — animations are
+   reduced to simple opacity, never removed entirely (state changes must stay
+   visible). This works alongside the in-app motion toggle. */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
 }
 
 * {
@@ -77,9 +96,10 @@ textarea {
 *::-webkit-scrollbar-thumb {
   background: rgba(255, 255, 255, 0.12);
   border-radius: 999px;
+  transition: background 0.25s var(--ease-soft);
 }
 *::-webkit-scrollbar-thumb:hover {
-  background: rgba(255, 255, 255, 0.22);
+  background: rgba(255, 255, 255, 0.24);
 }
 
 /* ---- Glass layers ----
