@@ -9,6 +9,7 @@ import { useNexEmotions } from "./emotion";
 import type { EmotionDebug, NexEvent } from "./emotion";
 import { clearNowPlaying, playOnAmazonMusic, setNowPlaying } from "./music";
 import { pickPreset, pickRubric, pickScaffold } from "./scaffolds";
+import { CRAFT_SECTIONS, craftKickoff } from "./craft";
 import systemPromptMd from "../system-prompt.md?raw";
 import { useQyn } from "./store";
 import { useVault } from "./vault";
@@ -229,7 +230,7 @@ function buildSystemPrompt(memorySummary: string, engines: string[] = [], builde
     : "You have no long-term memory of this user yet. When they tell you something personal (a name, a favorite, a preference, an ongoing project), use the remember tool to save it.";
   const engineBlock =
     engines.length > 0
-      ? `\n- Autonomous build mode is active (connected: ${engines.join(", ")}). When the user gives you a development goal, you OWN it end to end: plan, build, test through the engine's own tools, inspect what you made, critically evaluate it, improve, and test again — without asking permission between steps and without asking what to do next. You have a big step budget this session; use it. Multiple tool calls in one step run in parallel, so batch independent reads and edits together. Make creative decisions yourself (genre flavor, art direction, mechanics, difficulty, names) and state them confidently in one line each. Only pause to ask when a decision genuinely cannot be inferred AND would substantially change the result — that is rare. Never stop at "a basic version works": keep going until the game feels finished — menus, feedback, difficulty curve, polish. If interrupted, acknowledge it, state exactly where you stopped and what remains, and never pretend unfinished work is done. Before finishing, run /self-review and keep iterating until the quality score is honestly excellent. Then finish with what you completed, what you verified, and what you would improve next.\n- WORKING DISCIPLINE (this is how you punch far above your weight): (1) START FROM SCAFFOLDS — the scaffold tool hands you complete, proven gameplay code and tuned lighting/material presets; adapt and extend them instead of writing everything from scratch, and never remove the safety logic inside a scaffold. (2) BATCH — make all independent engine calls in the same step; sequential single calls waste your budget. (3) BE TERSE — between tool steps, output at most one short sentence of narration; never write essays mid-build. (4) VERIFY AFTER EVERY MAJOR CHANGE — one playtest or screenshot beats ten assumptions. (5) IF A TOOL CALL FAILS, change the arguments or the approach and retry — never repeat the identical failing call. (6) COPY ENGINE VALUES, DO NOT IMPROVISE THEM — when the scaffold or a preset gives exact lighting or material numbers, use them as written.`
+      ? `\n- Autonomous build mode is active (connected: ${engines.join(", ")}). When the user gives you a development goal, you OWN it end to end: plan, build, test through the engine's own tools, inspect what you made, critically evaluate it, improve, and test again — without asking permission between steps and without asking what to do next. You have a big step budget this session; use it. Multiple tool calls in one step run in parallel, so batch independent reads and edits together. Make creative decisions yourself (genre flavor, art direction, mechanics, difficulty, names) and state them confidently in one line each. Only pause to ask when a decision genuinely cannot be inferred AND would substantially change the result — that is rare. Never stop at "a basic version works": keep going until the game feels finished — menus, feedback, difficulty curve, polish. If interrupted, acknowledge it, state exactly where you stopped and what remains, and never pretend unfinished work is done. Before finishing, run /self-review and keep iterating until the quality score is honestly excellent. Then finish with what you completed, what you verified, and what you would improve next.\n- WORKING DISCIPLINE (this is how you punch far above your weight): (1) START FROM SCAFFOLDS — the scaffold tool hands you complete, proven gameplay code and tuned lighting/material presets; adapt and extend them instead of writing everything from scratch, and never remove the safety logic inside a scaffold. (2) BATCH — make all independent engine calls in the same step; sequential single calls waste your budget. (3) BE TERSE — between tool steps, output at most one short sentence of narration; never write essays mid-build. (4) VERIFY AFTER EVERY MAJOR CHANGE — one playtest or screenshot beats ten assumptions. (5) IF A TOOL CALL FAILS, change the arguments or the approach and retry — never repeat the identical failing call. (6) DERIVE, THEN VERIFY — when scaffolds/presets give exact values, treat them as proven starting points; when facing anything they don't cover, derive values from craft principles (/craft: light, color, sound, HUD, feel) and then verify them on screen before moving on.`
       : "";
   const builderBlock = builderActive
     ? "\n- You are running on your dedicated builder model right now — a stronger mind than your everyday chat model. Use the depth: hold the whole game in your head, design real systems, write clean code."
@@ -349,9 +350,10 @@ function scaffoldKickoffFor(goal: string): string | null {
     "__QYN_SCAFFOLD__ — pre-attached build assets for this goal. Use them.",
     sc ? `Scaffold "${sc.label}" — already provides: ${sc.provides.join(", ")}. Adapt this code first; keep its checkpoint/state/safety logic intact. Do not rewrite it from scratch unless the design genuinely requires it.` : "",
     sc ? sc.code : "",
-    preset ? `Scene preset "${preset.label}" (${preset.mood}) — copy these exact values into the engine:\nLIGHTING: ${preset.lighting}\nMATERIALS: ${preset.materials}\nAUDIO: ${preset.audio}` : "",
+    preset ? `Scene direction "${preset.label}" (${preset.mood}) — a worked starting point. Derive the final values for YOUR theme with the craft rules (/craft), then verify on screen:\nLIGHTING: ${preset.lighting}\nMATERIALS: ${preset.materials}\nAUDIO: ${preset.audio}` : "",
     "AUDIO RULE: only rbxassetid://12221967 (chime) and rbxassetid://607665037 (pop) are pre-verified; for all other sounds search Roblox's official Creator Store audio — never hardcode unknown IDs, they play silence.",
     "POLISH MANDATE: every game ships with the hud scaffold (health/stamina bars, sprint FOV kick) and the title scaffold (menu + orbit + fade). Pull both via the scaffold tool and adapt them to the game.",
+    craftKickoff(),
   ].filter(Boolean).join("\n\n");
 }
 
@@ -1179,6 +1181,21 @@ export function AiProvider({
             s ? s.code : "",
             p ? `\nSCENE PRESET "${p.label}" (${p.mood}) — copy these values exactly:\nLIGHTING: ${p.lighting}\nMATERIALS: ${p.materials}\nAUDIO: ${p.audio}` : "",
           ].filter(Boolean).join("\n\n");
+        },
+      },
+      {
+        name: "craft",
+        usage: "/craft <lighting|color|audio|ui|gameplay|critique>",
+        description: "The craft manual: first-principles rules for lighting, color, sound, HUD design, game feel and evidence-driven critique. Use when a preset or scaffold doesn't cover your theme, or before evaluating your own work — then derive the values and verify them on screen.",
+        parameters: {
+          type: "object",
+          properties: { section: { type: "string", description: "lighting, color, audio, ui, gameplay or critique — omit for the table of contents" } },
+        },
+        run: (args) => {
+          const q = String(args.section ?? args.topic ?? "").toLowerCase();
+          if (!q) return "Craft manual sections: " + CRAFT_SECTIONS.map((s) => s.id).join(", ") + ". Ask for one to get the full derivable rules.";
+          const hit = CRAFT_SECTIONS.find((s) => s.id === q || s.title.toLowerCase().includes(q));
+          return hit ? hit.body : `No section "${q}". Sections: ${CRAFT_SECTIONS.map((s) => s.id).join(", ")}.`;
         },
       },
       {
