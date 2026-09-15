@@ -1,5 +1,5 @@
 import { AnimatePresence, motion } from "framer-motion";
-import { Activity, ArrowRight, Bot, Cable, ChevronRight, Command, ExternalLink, FileText, FolderOpen, Image as ImageIcon, Loader2, Paperclip, PictureInPicture2, Plug, Plus, Send, Sparkles, Square, Wrench, X } from "lucide-react";
+import { Activity, Bot, Cable, ChevronRight, ExternalLink, FileText, FolderOpen, Image as ImageIcon, Loader2, Paperclip, PictureInPicture2, Plug, Plus, Send, Sparkles, Square, Wrench, X } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { AgentActivity, AgentActivityMini } from "../components/AgentActivity";
 import { AiFace } from "../components/AiFace";
@@ -182,9 +182,6 @@ export function AiView({ onNavigate }: { onNavigate: (view: ViewId) => void }) {
           >
             <FolderOpen size={13} className="text-accent" /> Nex Folder
           </button>
-          <button onClick={() => onNavigate("vault")} className="glass-soft flex h-8 items-center gap-2 rounded-lg px-3 text-[11.5px] font-medium text-frost-300 transition hover:text-frost-100">
-            <Command size={13} className="text-accent" /> Open Vault <ArrowRight size={12} />
-          </button>
           {isDesktop() && (
             <button
               onClick={toggleFloat}
@@ -233,7 +230,7 @@ export function AiView({ onNavigate }: { onNavigate: (view: ViewId) => void }) {
                 <p className="mt-4 text-[15px] font-semibold text-frost-100">What should Nex do?</p>
                 <p className="mt-1 max-w-sm text-[12px] leading-relaxed text-frost-500">Ask naturally, or type <span className="text-frost-300">/</span> to browse real QynOne tools.</p>
                 <div className="mt-5 flex max-w-md flex-wrap items-center justify-center gap-2">
-                  {["Open VS Code", "What's next today?", "Play some lofi"].map((suggestion) => (
+                  {["Build me a horror game", "What can you build today?", "Play some lofi"].map((suggestion) => (
                     <button
                       key={suggestion}
                       onClick={() => {

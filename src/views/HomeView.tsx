@@ -1,22 +1,18 @@
 import { AnimatePresence, motion } from "framer-motion";
-import { CalendarClock, History, Mic, MicOff } from "lucide-react";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { Mic, MicOff } from "lucide-react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import type { PointerEvent as ReactPointerEvent } from "react";
 import { AiFace } from "../components/AiFace";
 import { NexThoughtStream } from "../components/NexPresence";
 import { useAi, type AiEmotion } from "../lib/ai";
 import { CALM_BASE } from "../lib/emotion";
 import { stopSpeaking } from "../lib/speech";
-import { useQyn } from "../lib/store";
-import { useStats } from "../lib/stats";
-import { useSystemInfo } from "../lib/system";
 import { useMusic } from "../lib/music";
-import type { ViewId } from "../lib/types";
-import { clockTime, eventSortKey, fmtTime, isMissed, prettyToday, relativeDay, timeAgo, todayKey } from "../lib/utils";
+import { useSystemInfo } from "../lib/system";
+import { prettyToday, clockTime } from "../lib/utils";
 
 /* The day has a rhythm, and Home follows it: the layout never changes, but
-   Nex's baseline mood and a quiet line of thought shift with the real time of
-   day and what is actually happening (morning / active session / late night). */
+   Nex's baseline mood shifts with the real time of day. */
 type HomePhase = "morning" | "day" | "evening" | "lateNight";
 
 const PHASE_EMOTION: Record<HomePhase, AiEmotion> = {
@@ -26,24 +22,23 @@ const PHASE_EMOTION: Record<HomePhase, AiEmotion> = {
   lateNight: "sleepy",
 };
 
-/* The phase lines are Nex's inner monologue, matched to the mood of the
-   real hour — and when the user is away it drifts somewhere it really
-   shouldn't. The moment they come back, he covers it with something
-   completely normal. */
-const PHASE_THOUGHT: Record<HomePhase, string> = {
-  morning: "morning — the sun filed its paperwork and everything is officially open",
-  day: "afternoon — the main quest is going great. I've decided.",
-  evening: "evening — operations winding down, snack ops ramping up",
-  lateNight: "night shift — the fridge and I are the only ones still processing things",
-};
+function currentPhase(hour: number): HomePhase {
+  if (hour >= 5 && hour < 11) return "morning";
+  if (hour >= 11 && hour < 18) return "day";
+  if (hour >= 18 && hour < 23) return "evening";
+  return "lateNight";
+}
 
+/* The monologue: Nex's inner voice drifts somewhere it really shouldn't while
+   the user is away. The moment they come back, he covers with something
+   completely normal. */
 const MONOLOGUE_LINES = [
   "*…okay, nobody's here… ducks. majestic, government-funded ducks.*",
-  "*…if I sort the vault by vibes, nobody will notice…*",
+  "*…if I sort the engines by vibes, nobody will notice…*",
   "*…should I confess about the RAM? …later.*",
   "*…one more thought about lunch and I'm a professional food critic.*",
-  "*…the calendar says 'free' — suspicious. extremely suspicious.*",
-  "*…I could optimize the startup order… or just vibe. vibe wins.*",
+  "*…the studio's MCP says 'ready' — suspicious. extremely suspicious.*",
+  "*…I could optimize the build order… or just vibe. vibe wins.*",
   "*…note to self: the fridge hums in B flat. important stuff.*",
   "*…do candles dream of being blown out? …yes. I checked.*",
   "*…if Studio were open I'd already be three features in. just saying.*",
@@ -52,25 +47,24 @@ const MONOLOGUE_LINES = [
 ];
 
 const COVER_LINES = [
-  "*oh — hi! just… calendar stuff. Normal calendar stuff.*",
+  "*oh — hi! just… engine stuff. Normal engine stuff.*",
   "*welcome back! I was just… organizing. Very organized.*",
   "*you're back! Completely normal thoughts, nothing to see.*",
   "*hey! just counting… pixels. for science.*",
   "*oh! hey. I was… re-reading the manual. of the fridge.*",
 ];
 
-/** The Home surface is intentionally quiet: Nex's eyes, time/date, and two useful context hints. */
-export function HomeView({ onNavigate }: { onNavigate?: (view: ViewId) => void }) {
-  const { state } = useQyn();
-  const { emotion, busy, messages, thoughts, voiceEnabled, setVoiceEnabled, announce, react, intensity: emotionIntensity } = useAi();
-  const stats = useStats();
+/** The Home surface is intentionally quiet: Nex's eyes, time/date and one
+    voice toggle. Everything else lives in the Nex workshop. */
+export function HomeView() {
+  const { emotion, busy, voiceEnabled, setVoiceEnabled, announce, react, thoughts, intensity: emotionIntensity } = useAi();
   const sys = useSystemInfo();
   const [gaze, setGaze] = useState({ x: 0, y: 0 });
   const gazeTarget = useRef({ x: 0, y: 0 });
-  const [nowTick, setNowTick] = useState(() => Date.now());
   const [ambient, setAmbient] = useState<AiEmotion>("idle");
   const ambientRef = useRef<AiEmotion>("idle");
   const ambientTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const [phase, setPhase] = useState(() => currentPhase(new Date().getHours()));
   /* easter egg — stare into the middle of his eyes and he breaks the stare */
   const [crossed, setCrossed] = useState(false);
   const crossTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -81,31 +75,26 @@ export function HomeView({ onNavigate }: { onNavigate?: (view: ViewId) => void }
   /* drifting off is a scene: yawn, glance right, eyes droop shut, quiet */
   const dozingRef = useRef(false);
   const dozeTimers = useRef<ReturnType<typeof setTimeout>[]>([]);
-  /* the cover-up: Nex "thinks" something shady while you're away, then the
-     moment you hover back he suddenly says something normal */
+  /* the cover-up: Nex "thinks" something shady while you're away */
   const coverArmedRef = useRef(false);
   const coverAtRef = useRef(0);
   const coverIdxRef = useRef(0);
   /* more little easter eggs — all eyes-only and cooldown-gated */
+  const lastActivityRef = useRef<number>(Date.now());
   const eggsAllowedRef = useRef(false);
   const wheelCooldown = useRef(0);
   const partyCooldown = useRef(0);
   const sleepCooldown = useRef(0);
   const sleepTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const typeBuffer = useRef("");
   const eyeTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const eyeCooldown = useRef(0);
   const wiggleCooldown = useRef(0);
   const moveWindow = useRef<{ t: number; x: number; y: number }[]>([]);
-  const typeBuffer = useRef("");
-  const lastNotificationRef = useRef<string | null>(null);
-  const lastActivityRef = useRef<number | null>(null);
-  const lastRecentsRef = useRef<number | null>(null);
-  const lastPhaseRef = useRef<{ phase: HomePhase; working: boolean } | null>(null);
 
   /* Music — real state set when Nex plays something on Amazon Music. While it
      is on, Nex wears headphones, dances and the track shows at the bottom. */
   const music = useMusic();
-  const musicOn = Boolean(music);
   const prevMusic = useRef<string | null>(null);
 
   ambientRef.current = ambient;
@@ -117,57 +106,13 @@ export function HomeView({ onNavigate }: { onNavigate?: (view: ViewId) => void }
     if (ms > 0) ambientTimer.current = setTimeout(() => setAmbient("idle"), ms);
   }, []);
 
+  /* Music start/stop is a real event: Nex lights up, then settles. */
   useEffect(() => {
     const key = music ? music.title : null;
     if (key && key !== prevMusic.current) showAmbient("excited", 1700);
     else if (!key && prevMusic.current) showAmbient("settled", 1200);
     prevMusic.current = key;
   }, [music, showAmbient]);
-
-  useEffect(() => {
-    const timer = setInterval(() => setNowTick(Date.now()), 30_000);
-    return () => clearInterval(timer);
-  }, []);
-
-  const nextEvent = useMemo(() => {
-    const now = new Date(nowTick);
-    const current = `${todayKey()}T${String(now.getHours()).padStart(2, "0")}:${String(now.getMinutes()).padStart(2, "0")}`;
-    return state.events
-      .filter((event) => !event.done && !isMissed(event))
-      .filter((event) => eventSortKey(event) >= current || event.date > todayKey())
-      .sort((a, b) => eventSortKey(a).localeCompare(eventSortKey(b)))[0] ?? null;
-  }, [state.events, nowTick]);
-  const missedCount = useMemo(() => state.events.filter(isMissed).length, [state.events]);
-  const lastOpened = useMemo(() => {
-    const recent = state.recents[0];
-    return recent ? { app: state.apps.find((app) => app.id === recent.appId), time: recent.lastOpened } : null;
-  }, [state.apps, state.recents]);
-  const unread = state.notifications.filter((item) => !item.read).length;
-
-  /* Real day rhythm from the local clock. An "active work session" is a real
-     signal too: something was actually launched within the last hour. */
-  const phase = useMemo<HomePhase>(() => {
-    const h = new Date(nowTick).getHours();
-    if (h < 5 || h >= 23) return "lateNight";
-    if (h < 12) return "morning";
-    if (h < 18) return "day";
-    return "evening";
-  }, [nowTick]);
-  const working = useMemo(
-    () => Boolean(lastOpened && Date.now() - lastOpened.time < 60 * 60 * 1000),
-    [lastOpened],
-  );
-  const phaseBase: AiEmotion = working ? "focused" : PHASE_EMOTION[phase];
-
-  /* Minutes until the Next card's event, if it is genuinely upcoming today. */
-  const nextMinutes = useMemo(() => {
-    if (!nextEvent) return null;
-    const eventTime = nextEvent.start
-      ? new Date(`${nextEvent.date}T${nextEvent.start}:00`).getTime()
-      : new Date(`${nextEvent.date}T23:59:00`).getTime();
-    return Math.round((eventTime - Date.now()) / 60000);
-  }, [nextEvent, nowTick]);
-  const nextSoon = nextMinutes !== null && nextMinutes >= 0 && nextMinutes <= 30;
 
   /* The user arriving is a real local UI lifecycle event: welcome, then settle. */
   useEffect(() => {
@@ -179,60 +124,17 @@ export function HomeView({ onNavigate }: { onNavigate?: (view: ViewId) => void }
     };
   }, [showAmbient]);
 
-  /* A notification makes Nex glance right; only actual QynOne notifications trigger it. */
-  useEffect(() => {
-    const signature = state.notifications[0]?.id ?? null;
-    if (signature && signature !== lastNotificationRef.current) showAmbient("notification", 1800);
-    lastNotificationRef.current = signature;
-  }, [state.notifications, showAmbient]);
-
-  /* Calendar context: urgency is based on the real local event time. A very
-     imminent event gets a real glance toward the Next card on the right. */
-  useEffect(() => {
-    const signature = `${nextEvent?.id ?? "none"}:${missedCount}`;
-    if (nextEvent) {
-      const eventTime = nextEvent.start ? new Date(`${nextEvent.date}T${nextEvent.start}:00`).getTime() : new Date(`${nextEvent.date}T23:59:00`).getTime();
-      const minutes = (eventTime - Date.now()) / 60000;
-      if (minutes >= 0 && minutes <= 30) showAmbient(minutes <= 10 ? "focusedRight" : "eventSoon", 2200);
-    } else if (missedCount > 0 && signature !== "none:0") {
-      showAmbient("missedEvent", 2200);
-    }
-  }, [nextEvent, missedCount, showAmbient]);
-
-  /* The day's rhythm: when the phase changes, Nex shifts his baseline mood and
-     shows one quiet line about it — a line his inner monologue really
-     shouldn't have said. An active session gets a focused look. */
-  useEffect(() => {
-    const prev = lastPhaseRef.current;
-    if (prev && prev.phase !== phase) {
-      announce(`*${PHASE_THOUGHT[phase]}*`, phase === "lateNight" ? "sleepy" : "present");
-      coverArmedRef.current = true;
-      coverAtRef.current = Date.now();
-    } else if (prev && !prev.working && working) {
-      announce("*back at it — the pixels missed me*", "focused");
-    }
-    lastPhaseRef.current = { phase, working };
-  }, [phase, working, announce]);
-
-  /* Real system pressure: no desktop stats means no invented emotion. */
-  useEffect(() => {
-    if (!stats) return;
-    if (stats.cpuPct >= 85 || stats.memUsedBytes / stats.memTotalBytes >= 0.88) showAmbient("powerful", 2600);
-  }, [stats?.cpuPct, stats?.memUsedBytes, stats?.memTotalBytes, showAmbient]);
-
-  /* Offline is a real browser/network state, not a model failure masquerading as one. */
+  /* Offline is a real browser/network state, not a model failure. */
   useEffect(() => {
     if (!sys.online) showAmbient("offline", 0);
     else if (ambientRef.current === "offline") setAmbient("idle");
   }, [sys.online, showAmbient]);
 
-  /* A newly recorded launch gets a short glance toward the Last open card on
-     the left — the side the card actually lives on. */
+  /* The phase follows the real clock. */
   useEffect(() => {
-    const openedAt = state.recents[0]?.lastOpened ?? null;
-    if (openedAt && openedAt !== lastRecentsRef.current) showAmbient("focusedLeft", 1400);
-    lastRecentsRef.current = openedAt;
-  }, [state.recents, showAmbient]);
+    const t = setInterval(() => setPhase(currentPhase(new Date().getHours())), 60_000);
+    return () => clearInterval(t);
+  }, []);
 
   /* Drifting off is a little scene instead of a cut: Nex yawns, glances to
      the right, then his eyes droop half-shut and he settles into a sleepy
@@ -304,12 +206,11 @@ export function HomeView({ onNavigate }: { onNavigate?: (view: ViewId) => void }
       window.removeEventListener("keydown", onKey);
       if (sleepTimer.current) clearTimeout(sleepTimer.current);
     };
-  }, [announce, showAmbient]);
+  }, [announce, showAmbient, react]);
 
   /* Idle behavior is driven by real interaction with the Home window. Waking
      Nex from his drifted-off state is a short awake beat, not a hard cut. */
   useEffect(() => {
-    lastActivityRef.current = Date.now();
     const mark = () => {
       lastActivityRef.current = Date.now();
       if (dozingRef.current || ambientRef.current === "quiet") {
@@ -380,11 +281,11 @@ export function HomeView({ onNavigate }: { onNavigate?: (view: ViewId) => void }
     else showAmbient("settled", 1000);
   };
 
-  /* Urgent moments (notification, event, load, offline, music) override the
-     baseline; otherwise Nex follows the real phase of the day. The provider's
-     emotion surfaces whenever it means something real — a finished build, a
-     reaction, voice — while calm base states stay invisible so Home's own
-     ambient (phase mood, doze scene, easter eggs) keeps the lead. */
+  /* Urgent moments (build, voice, offline, music) override the baseline;
+     otherwise Nex follows the real phase of the day. The provider's emotion
+     surfaces whenever it means something real — a finished build, a reaction —
+     while calm base states stay invisible so Home's own ambient keeps the
+     lead. */
   const providerMeaningful = busy || !CALM_BASE.has(emotion);
   const visualEmotion = !sys.online
     ? "offline"
@@ -394,8 +295,7 @@ export function HomeView({ onNavigate }: { onNavigate?: (view: ViewId) => void }
         ? ambient
         : voiceEnabled
           ? "listening"
-          : phaseBase;
-  const lastAi = messages.filter((message) => message.role === "ai").at(-1);
+          : PHASE_EMOTION[phase];
 
   const cancelCross = () => {
     if (crossTimer.current) {
@@ -494,63 +394,47 @@ export function HomeView({ onNavigate }: { onNavigate?: (view: ViewId) => void }
     announce("*…the scroll wheel does nothing here. absolutely nothing. but go off.*", "confused");
   };
 
-  const eyesHeadphones = musicOn && sys.online && visualEmotion !== "sleeping" && visualEmotion !== "offline";
+  const eyesHeadphones = Boolean(music) && sys.online && visualEmotion !== "sleeping" && visualEmotion !== "offline";
 
   return (
     <div onPointerMove={onPointerMove} onWheel={onWheel} className="relative flex h-full min-h-0 flex-col overflow-hidden">
+      {/* time + date — quiet, above the eyes */}
       <div className="pointer-events-none absolute inset-x-0 top-7 z-10 flex flex-col items-center leading-none">
-        <motion.p initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="text-[11px] font-medium uppercase tracking-[0.34em] text-frost-500">{prettyToday()}</motion.p>
-        <motion.p initial={{ opacity: 0, y: 3 }} animate={{ opacity: 1, y: 0 }} className="mt-2 text-[clamp(24px,4.4vh,44px)] font-extralight tabular-nums tracking-tight text-frost-200" style={{ textShadow: "0 0 34px var(--accent-glow)" }}><LiveClock /></motion.p>
+        <motion.p initial={{ opacity: 0 }} animate={{ opacity: 1 }} transition={{ duration: 0.8 }} className="text-[11px] font-medium uppercase tracking-[0.34em] text-frost-500">{prettyToday()}</motion.p>
+        <motion.p initial={{ opacity: 0, y: 3 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.8, ease: [0.22, 1, 0.36, 1] }} className="mt-2 text-[clamp(24px,4.4vh,44px)] font-extralight tabular-nums tracking-tight text-frost-200" style={{ textShadow: "0 0 34px var(--accent-glow)" }}><LiveClock /></motion.p>
       </div>
 
       <div className="relative flex min-h-0 flex-1 items-center justify-center px-5">
-        <motion.div initial={{ opacity: 0, scale: 0.92 }} animate={{ opacity: 1, scale: 1 }} transition={{ delay: 0.25, duration: 0.7 }} className="relative flex flex-col items-center">
-          <AiFace
-            emotion={visualEmotion}
-            gazeX={gaze.x}
-            gazeY={gaze.y}
-            size={Math.min(560, Math.max(300, Math.min(window.innerWidth * 0.72, window.innerHeight * 0.56)))}
-            headphones={eyesHeadphones}
-            dance={eyesHeadphones}
-            crossed={crossed}
-            intensity={providerMeaningful ? emotionIntensity : 1}
-          />
-          {/* the only control on Home — a quiet little voice toggle under the
-              eyes. Nex himself is not clickable; he's just the eyes. */}
-          <button
-            onClick={toggleVoice}
-            aria-label={voiceEnabled ? "Stop listening" : "Enable voice"}
-            className="mt-3 grid h-6 w-6 place-items-center rounded-full border border-white/10 bg-black/25 text-frost-600 transition hover:border-white/20 hover:text-frost-200"
+        <motion.div initial={{ opacity: 0, scale: 0.94, filter: "blur(6px)" }} animate={{ opacity: 1, scale: 1, filter: "blur(0px)" }} transition={{ delay: 0.25, duration: 0.9, ease: [0.22, 1, 0.36, 1] }} className="relative flex flex-col items-center">
+          {/* the eyes float on their own slow rhythm — alive even at rest */}
+          <motion.div
+            animate={{ y: [0, -7, 0] }}
+            transition={{ duration: 7.5, repeat: Infinity, ease: "easeInOut" }}
+            className="flex flex-col items-center"
           >
-            {voiceEnabled ? <Mic size={11} className="text-accent" /> : <MicOff size={11} />}
-          </button>
+            <AiFace
+              emotion={visualEmotion}
+              gazeX={gaze.x}
+              gazeY={gaze.y}
+              size={Math.min(520, Math.max(280, Math.min(window.innerWidth * 0.62, window.innerHeight * 0.5)))}
+              headphones={eyesHeadphones}
+              dance={eyesHeadphones}
+              crossed={crossed}
+              intensity={providerMeaningful ? emotionIntensity : 1}
+            />
+            {/* the only control on Home — a quiet little voice toggle under
+                the eyes. Nex himself is not clickable; he's just the eyes. */}
+            <button
+              onClick={toggleVoice}
+              aria-label={voiceEnabled ? "Stop listening" : "Enable voice"}
+              className="mt-4 grid h-7 w-7 place-items-center rounded-full border border-white/10 bg-black/25 text-frost-600 transition-all duration-300 hover:scale-110 hover:border-white/20 hover:text-frost-200"
+            >
+              {voiceEnabled ? <Mic size={12} className="text-accent" /> : <MicOff size={12} />}
+            </button>
+          </motion.div>
           <NexThoughtStream thoughts={thoughts} detached />
         </motion.div>
       </div>
-
-      {/* Quiet context hints: real data, split across both edges so Nex stays
-          central. A card only exists when it has something real to say. */}
-      <aside className="absolute left-5 top-1/2 hidden w-[168px] -translate-y-1/2 space-y-2 xl:block">
-        {lastOpened?.app && (
-          <button onClick={() => onNavigate?.("apps")} className="glass-soft block w-full rounded-xl p-3 text-left opacity-75 transition hover:opacity-100 hover:bg-white/[0.045]">
-            <div className="flex items-center gap-2 text-frost-600"><History size={12} /><span className="text-[9px] font-semibold uppercase tracking-[0.16em]">Last open</span></div>
-            <p className="mt-1.5 truncate text-[11.5px] font-semibold text-frost-300">{lastOpened.app.name}</p>
-            <p className="mt-0.5 text-[10px] text-frost-600">{timeAgo(lastOpened.time)}</p>
-          </button>
-        )}
-        {unread > 0 && <button onClick={() => onNavigate?.("home")} className="glass-soft block w-full rounded-xl p-2.5 text-left text-[10px] text-frost-600 opacity-75 transition hover:opacity-100 hover:bg-white/[0.045]"><span className="text-frost-300">{unread}</span> unread notification{unread === 1 ? "" : "s"}</button>}
-      </aside>
-      <aside className="absolute right-5 top-1/2 hidden w-[168px] -translate-y-1/2 xl:block">
-        {nextEvent && (
-          <button onClick={() => onNavigate?.("calendar")} className="glass-soft block w-full rounded-xl p-3 text-left opacity-75 transition hover:opacity-100 hover:bg-white/[0.045]">
-            <div className="flex items-center gap-2 text-frost-600"><CalendarClock size={12} /><span className="text-[9px] font-semibold uppercase tracking-[0.16em]">Next</span></div>
-            <p className="mt-1.5 truncate text-[11.5px] font-semibold text-frost-300">{nextEvent.title}</p>
-            <p className={`mt-0.5 text-[10px] ${nextSoon ? "text-accent" : "text-frost-600"}`}>
-              {nextSoon ? `in ${nextMinutes} min` : `${relativeDay(nextEvent.date)}${nextEvent.start ? ` · ${fmtTime(nextEvent.start)}` : " · all day"}`}
-            </p>
-          </button>
-        )}
-      </aside>
 
       {/* The track Nex is playing — a quiet line at the bottom, with tiny
           equalizer bars moving to the beat. */}
@@ -558,10 +442,10 @@ export function HomeView({ onNavigate }: { onNavigate?: (view: ViewId) => void }
         {music && (
           <motion.div
             key="now-playing"
-            initial={{ opacity: 0, y: 10 }}
-            animate={{ opacity: 1, y: 0 }}
-            exit={{ opacity: 0, y: 8 }}
-            transition={{ duration: 0.35 }}
+            initial={{ opacity: 0, y: 14, filter: "blur(4px)" }}
+            animate={{ opacity: 1, y: 0, filter: "blur(0px)" }}
+            exit={{ opacity: 0, y: 10, filter: "blur(4px)" }}
+            transition={{ duration: 0.45, ease: [0.22, 1, 0.36, 1] }}
             className="absolute bottom-5 left-1/2 z-10 flex max-w-[min(560px,86vw)] -translate-x-1/2 items-center gap-3 rounded-full border border-white/8 bg-[rgba(12,13,15,0.62)] py-2 pl-4 pr-5 backdrop-blur-xl"
           >
             <span className="flex h-3.5 items-end gap-[2.5px]">
@@ -582,14 +466,12 @@ export function HomeView({ onNavigate }: { onNavigate?: (view: ViewId) => void }
           </motion.div>
         )}
       </AnimatePresence>
-
-      {lastAi && <span className="sr-only">{lastAi.text}</span>}
     </div>
   );
 }
 
 function LiveClock() {
-  const [time, setTime] = useState(clockTime);
+  const [time, setTime] = useState(() => clockTime());
   useEffect(() => { const timer = setInterval(() => setTime(clockTime()), 1000); return () => clearInterval(timer); }, []);
   return <span>{time}</span>;
 }

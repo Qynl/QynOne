@@ -195,9 +195,11 @@ export function AiFace({
     return () => clearTimeout(t);
   }, [emotion]);
 
-  const eyeW = Math.round(size * 0.34);
-  const eyeH = Math.round(size * 0.27);
-  const gap = Math.round(size * 0.16);
+  /* Slender eyes: a wide pure-white slab at large sizes reads as a blob, so
+     keep them as elegant vertical pills with a soft blue sheen. */
+  const eyeW = Math.round(size * 0.22);
+  const eyeH = Math.round(size * 0.19);
+  const gap = Math.round(size * 0.2);
   const glowMult = spec.dim ? 1 : Math.min(1.35, Math.max(0.7, 0.82 + intensity * 0.35));
   const openY = booted ? Math.min(1.22, Math.max(0.03, spec.open * (spec.dim ? 1 : 0.9 + intensity * 0.12))) : 0.04;
   /* A small gaze follows the user's pointer without adding pupils or a face. */
@@ -206,8 +208,8 @@ export function AiFace({
 
   const body = spec.dim
     ? "linear-gradient(180deg, #5b6a85 0%, #46546e 100%)"
-    : "linear-gradient(180deg, #ffffff 0%, #f4f8ff 58%, #dde8f8 100%)";
-  const edge = spec.dim ? "rgba(120,140,180,0.35)" : "rgba(160,190,240,0.45)";
+    : "linear-gradient(180deg, #f8fbff 0%, #e9f2ff 58%, #c9def8 100%)";
+  const edge = spec.dim ? "rgba(120,140,180,0.35)" : "rgba(150,185,235,0.4)";
   const glowBase = spec.dim ? "rgba(100,120,160,0.28)" : "var(--accent-glow)";
 
   const shakeAnim = spec.shake ? { x: [0, -4, 4, -3, 3, 0] } : { x: 0 };

@@ -1,16 +1,12 @@
 import { AnimatePresence, motion } from "framer-motion";
-import { AlertTriangle, CheckCircle2, Info } from "lucide-react";
+import { CheckCircle2 } from "lucide-react";
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from "react";
 import type { ReactNode } from "react";
-import { getDesktop } from "../lib/desktop";
-import type { AppItem } from "../lib/types";
 import { uid } from "../lib/utils";
-import { useQyn } from "../lib/store";
-import { cn, initials, shade } from "../lib/utils";
-import { AppModal, FolderModal, WorkspaceModal } from "./modals";
+import { cn } from "../lib/utils";
 
 /* ------------------------------------------------------------------ */
-/* Toasts + launch helper                                              */
+/* Toasts                                                              */
 /* ------------------------------------------------------------------ */
 
 interface Toast {
@@ -22,10 +18,6 @@ interface Toast {
 
 interface UiApi {
   toast: (message: string, opts?: { icon?: ReactNode; duration?: number }) => void;
-  openAddApp: (folderId?: string | null) => void;
-  openEditApp: (appId: string) => void;
-  openFolderModal: (folderId?: string) => void;
-  openWorkspaceModal: (workspaceId?: string) => void;
 }
 
 const UiContext = createContext<UiApi | null>(null);
@@ -38,13 +30,6 @@ export function useUi(): UiApi {
 
 export function UiProvider({ children }: { children: ReactNode }) {
   const [toasts, setToasts] = useState<Toast[]>([]);
-  const [modal, setModal] = useState<
-    | { kind: "add-app"; folderId: string | null }
-    | { kind: "edit-app"; appId: string }
-    | { kind: "folder"; folderId?: string }
-    | { kind: "workspace"; workspaceId?: string }
-    | null
-  >(null);
   const timers = useRef<Map<string, ReturnType<typeof setTimeout>>>(new Map());
 
   const dismiss = useCallback((id: string) => {
@@ -72,16 +57,7 @@ export function UiProvider({ children }: { children: ReactNode }) {
     };
   }, []);
 
-  const api = useMemo<UiApi>(
-    () => ({
-      toast,
-      openAddApp: (folderId: string | null = null) => setModal({ kind: "add-app", folderId }),
-      openEditApp: (appId: string) => setModal({ kind: "edit-app", appId }),
-      openFolderModal: (folderId?: string) => setModal({ kind: "folder", folderId }),
-      openWorkspaceModal: (workspaceId?: string) => setModal({ kind: "workspace", workspaceId }),
-    }),
-    [toast],
-  );
+  const api = useMemo<UiApi>(() => ({ toast }), [toast]);
 
   return (
     <UiContext.Provider value={api}>
@@ -123,121 +99,7 @@ export function UiProvider({ children }: { children: ReactNode }) {
           ))}
         </AnimatePresence>
       </div>
-
-      {/* Modal layer */}
-      <AnimatePresence>
-        {modal &&
-          (modal.kind === "folder" ? (
-            <FolderModal key="folder-modal" folderId={modal.folderId} onClose={() => setModal(null)} />
-          ) : modal.kind === "workspace" ? (
-            <WorkspaceModal
-              key="workspace-modal"
-              workspaceId={modal.workspaceId}
-              onClose={() => setModal(null)}
-            />
-          ) : (
-            <AppModal
-              key="app-modal"
-              appId={modal.kind === "edit-app" ? modal.appId : undefined}
-              presetFolderId={modal.kind === "add-app" ? modal.folderId : undefined}
-              onClose={() => setModal(null)}
-            />
-          ))}
-      </AnimatePresence>
     </UiContext.Provider>
-  );
-}
-
-/* ------------------------------------------------------------------ */
-/* Profile avatar                                                      */
-/* ------------------------------------------------------------------ */
-
-export function Avatar({
-  name,
-  color,
-  size = 40,
-  ring,
-}: {
-  name: string;
-  color: string;
-  size?: number;
-  /** subtle accent ring around the avatar */
-  ring?: boolean;
-}) {
-  return (
-    <div
-      className={cn(
-        "relative grid shrink-0 place-items-center rounded-full shadow-[0_10px_28px_-10px_rgba(0,0,0,0.75)]",
-        ring ? "ring-2 ring-[color-mix(in_srgb,var(--accent)_55%,transparent)]" : "ring-1 ring-white/15",
-      )}
-      style={{
-        width: size,
-        height: size,
-        background: `linear-gradient(145deg, ${color} 0%, ${shade(color, -34)} 100%)`,
-      }}
-    >
-      <span
-        className="relative font-bold tracking-wide text-white"
-        style={{ fontSize: Math.max(11, Math.round(size * 0.36)) }}
-      >
-        {initials(name)}
-      </span>
-    </div>
-  );
-}
-
-/* ------------------------------------------------------------------ */
-/* Launch helper                                                       */
-/* ------------------------------------------------------------------ */
-
-export function useLaunch() {
-  const { actions } = useQyn();
-  const { toast } = useUi();
-  return useCallback(
-    (app: AppItem) => {
-      const bridge = getDesktop();
-
-      /* Desktop app: launch the real application through the OS shell. */
-      if (bridge) {
-        if (!app.launchUri) {
-          toast(`Set a launch target for ${app.name}`, {
-            icon: <Info size={15} className="text-accent" />,
-          });
-          return;
-        }
-        /* Only count a launch once it is actually being attempted — a failed
-           launch (no target) must not pollute "recently opened". */
-        actions.recordLaunch(app.id);
-        toast(`Launching ${app.name}…`);
-        bridge
-          .launch(app.launchUri)
-          .then((res) => {
-            if (res.ok) {
-              toast(`${app.name} is opening`);
-            } else {
-              toast(res.error ? `${app.name} couldn’t open — ${res.error}` : `${app.name} couldn’t open`, {
-                icon: <AlertTriangle size={15} className="text-amber-300" />,
-              });
-            }
-          })
-          .catch(() => {
-            toast(`${app.name} couldn’t open`, {
-              icon: <AlertTriangle size={15} className="text-amber-300" />,
-            });
-          });
-        return;
-      }
-
-      /* Web preview: open the target in a new tab. */
-      if (!app.launchUri) {
-        toast("This app has no launch target yet");
-        return;
-      }
-      actions.recordLaunch(app.id);
-      toast(`Launching ${app.name}…`);
-      window.setTimeout(() => window.open(app.launchUri, "_blank", "noopener,noreferrer"), 350);
-    },
-    [actions, toast],
   );
 }
 

@@ -14,8 +14,7 @@ import { useVault } from "./vault";
 import { useMemory, MEMORY_PATH, renderMemory } from "./memory";
 import type { MemoryEntry, MemoryKind } from "./memory";
 import { MEMORY_COMPACT_AT, MEMORY_MAX_CHARS, NOTE_MAX_CHARS, VAULT_MAX_NOTES } from "./limits";
-import { runVaultTidy, vaultUsage } from "./vaultMaintain";
-import { dateKey, eventSortKey, fmtTime, parseTime, relativeDay, todayKey, uid } from "./utils";
+import { uid } from "./utils";
 import { speak, stopSpeaking, useNexVoice } from "./speech";
 import { DEFAULT_GATE, currentPhase, gdaDigest, gdaFinish, gdaRecordBlocker, gdaStart, gdaStatusText, gdaSubmitReview, phaseDirective } from "./gamedev";
 import type { GdaScope, GdaState, QualityReport } from "./gamedev";
@@ -227,7 +226,7 @@ function buildSystemPrompt(memorySummary: string, engines: string[] = []): strin
     : "You have no long-term memory of this user yet. When they tell you something personal (a name, a favorite, a preference, an ongoing project), use the remember tool to save it.";
   const engineBlock =
     engines.length > 0
-      ? `\n- Autonomous build mode is active (connected: ${engines.join(", ")}). When the user gives you a development goal, treat it as a project you own: plan, build, test through the engine's own tools, inspect what you made, critically evaluate it, then improve and test again — without waiting for permission between steps. You have a generous step budget this session; use it. Multiple tool calls in one step run in parallel, so batch independent reads and edits together. Narrate your plan and reasoning in your reply text between tool steps — the user watches a live Agent Activity trace of your thoughts, tool calls and results. The user can press Stop at any moment; if interrupted, acknowledge it, state exactly where you stopped and what remains, and never pretend unfinished work is done. Only pause to ask when a decision genuinely cannot be inferred or would substantially change the result. Never stop at "a basic version works" when the request implies more. Before finishing, run /self-review and keep iterating until the quality score is honestly excellent. If a decision would substantially change the result (genre, art style, core mechanic, scope), ask the user one short specific question and wait for the answer — better one good question than a wrong guess. Then finish with what you completed, what you verified, and what you would improve next.`
+      ? `\n- Autonomous build mode is active (connected: ${engines.join(", ")}). When the user gives you a development goal, you OWN it end to end: plan, build, test through the engine's own tools, inspect what you made, critically evaluate it, improve, and test again — without asking permission between steps and without asking what to do next. You have a big step budget this session; use it. Multiple tool calls in one step run in parallel, so batch independent reads and edits together. Make creative decisions yourself (genre flavor, art direction, mechanics, difficulty, names) and state them confidently in one line each. Only pause to ask when a decision genuinely cannot be inferred AND would substantially change the result — that is rare. Never stop at "a basic version works": keep going until the game feels finished — menus, feedback, difficulty curve, polish. If interrupted, acknowledge it, state exactly where you stopped and what remains, and never pretend unfinished work is done. Before finishing, run /self-review and keep iterating until the quality score is honestly excellent. Then finish with what you completed, what you verified, and what you would improve next.`
       : "";
   return `${systemPromptMd.trim()}\n\n---\n\n## Runtime context (refreshed on every request)\n\n- Today: ${now.toLocaleDateString(undefined, { weekday: "long", year: "numeric", month: "long", day: "numeric" })}. Current time: ${now.toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit" })}.\n- Vault budget: max ${VAULT_MAX_NOTES} notes, ${(NOTE_MAX_CHARS / 1000).toFixed(0)} KB per note. Memory file: ${MEMORY_PATH} (capped at ${(MEMORY_MAX_CHARS / 1000).toFixed(1)} KB).\n- Connected MCP engines right now: ${engines.length > 0 ? engines.join(", ") : "none — if the user asks for engine work (Roblox, Unreal, …), say you need the QynOne desktop app and the engine running with its MCP server enabled (Settings → Connections)."}${engineBlock}\n- ${memoryBlock}`;
 }
@@ -1118,17 +1117,11 @@ export function AiProvider({
   /* ------------------------------------------------------------------ */
 
   const tools = useMemo<AiToolDef[]>(() => {
-    const userNotes = vault.notes.filter((n) => !n.folder.startsWith("_"));
-    const findFolder = (query: string) => {
-      const q = query.trim().toLowerCase();
-      return state.folders.find((f) => f.name.toLowerCase().includes(q)) ?? null;
-    };
-
     return [
       {
         name: "navigate",
-        usage: "/navigate <home|apps|folders|workspaces|system|files|tools|vault|settings|profile>",
-        description: "Open a QynOne view: home, apps, folders, workspaces, system, files, tools, vault, settings or profile.",
+        usage: "/navigate <home|ai|settings>",
+        description: "Open a QynOne view: home, the Nex workshop (ai) or settings.",
         parameters: {
           type: "object",
           properties: { view: { type: "string", description: "the view to open" } },
@@ -1136,131 +1129,11 @@ export function AiProvider({
         },
         run: (args) => {
           const view = String(args.view ?? "").toLowerCase();
-          const allowed = ["home", "ai", "apps", "folders", "workspaces", "system", "files", "tools", "vault", "calendar", "settings", "profile"];
+          const allowed = ["home", "ai", "settings"];
           if (!allowed.includes(view)) return `Unknown view "${view}". Allowed: ${allowed.join(", ")}.`;
           onNavigate(view);
           return `Opened ${view}.`;
         },
-      },
-      {
-        name: "open-folder",
-        usage: "/open-folder <folder name>",
-        description: "Open a virtual folder by name.",
-        parameters: {
-          type: "object",
-          properties: { query: { type: "string", description: "virtual folder name" } },
-          required: ["query"],
-        },
-        run: (args) => {
-          const folder = findFolder(String(args.query ?? ""));
-          if (!folder) return `No folder named "${args.query}" found.`;
-          onOpenFolder(folder.id);
-          return `Opened folder ${folder.name}.`;
-        },
-      },
-      {
-        name: "list_apps",
-        usage: "/list-apps",
-        description: "List every application in QynOne.",
-        parameters: { type: "object", properties: {} },
-        run: () =>
-          state.apps.length === 0
-            ? "No apps yet."
-            : state.apps.map((a) => `${a.name}${a.favorite ? " (pinned)" : ""}`).join(", "),
-      },
-      {
-        name: "list_folders",
-        usage: "/list-folders",
-        description: "List the virtual folders in QynOne.",
-        parameters: { type: "object", properties: {} },
-        run: () =>
-          state.folders.length === 0
-            ? "No virtual folders yet."
-            : state.folders.map((f) => `${f.name} (${state.apps.filter((a) => a.folderId === f.id).length} apps)`).join(", "),
-      },
-      {
-        name: "list_workspaces",
-        usage: "/list-workspaces",
-        description: "List the workspaces in QynOne.",
-        parameters: { type: "object", properties: {} },
-        run: () =>
-          state.workspaces.length === 0
-            ? "No workspaces yet."
-            : state.workspaces.map((w) => `${w.name} (${w.itemIds.length} apps)`).join(", "),
-      },
-      {
-        name: "create-note",
-        usage: "/create-note <name> [content]",
-        description: "Create a Markdown note in the vault.",
-        parameters: {
-          type: "object",
-          properties: {
-            name: { type: "string", description: "note name" },
-            folder: { type: "string", description: "optional subfolder" },
-            content: { type: "string", description: "optional Markdown content" },
-          },
-          required: ["name"],
-        },
-        run: async (args) => {
-          const name = String(args.name ?? "").trim();
-          if (!name) return "A note needs a name.";
-          const folder = String(args.folder ?? "").trim();
-          const content = String(args.content ?? `# ${name}\n\n`);
-          if (content.length > NOTE_MAX_CHARS) {
-            return `That note would be ${(content.length / 1024).toFixed(1)} KB — over the ${(NOTE_MAX_CHARS / 1000).toFixed(0)} KB per-note limit. Make it shorter, or let me keep a summary instead.`;
-          }
-          if (!folder.split("/")[0].startsWith("_") && userNotes.length >= VAULT_MAX_NOTES) {
-            return `The vault is full (${VAULT_MAX_NOTES} notes). Say /vault-cleanup and I'll archive what no longer fits.`;
-          }
-          const path = await vault.createNote(name, folder, content);
-          if (!path) return `Couldn't create "${name}" (does it already exist, or is the vault at its limit?).`;
-          return `Created note ${path}.`;
-        },
-      },
-      {
-        name: "open-note",
-        usage: "/open-note <note name>",
-        description: "Open a note from the vault.",
-        parameters: {
-          type: "object",
-          properties: { query: { type: "string", description: "note name" } },
-          required: ["query"],
-        },
-        run: (args) => {
-          const q = String(args.query ?? "").toLowerCase();
-          const hit = userNotes.find((n) => n.name.toLowerCase() === q) ?? userNotes.find((n) => n.name.toLowerCase().includes(q));
-          if (!hit) return `No note named "${args.query}" in the vault.`;
-          onOpenNote(hit.name);
-          return `Opening note ${hit.name}.`;
-        },
-      },
-      {
-        name: "search-notes",
-        usage: "/search-notes <query>",
-        description: "Search the Markdown vault.",
-        parameters: {
-          type: "object",
-          properties: { query: { type: "string", description: "search text" } },
-          required: ["query"],
-        },
-        run: (args) => {
-          const hits = vault.searchNotes(String(args.query ?? "")).filter((n) => !n.folder.startsWith("_"));
-          if (hits.length === 0) return `Nothing found for "${args.query}".`;
-          return hits
-            .slice(0, 6)
-            .map((n) => `${n.name} (${n.folder || "root"})${n.tags.length ? ` ${n.tags.join(" ")}` : ""}`)
-            .join(", ");
-        },
-      },
-      {
-        name: "list_notes",
-        usage: "/list-notes",
-        description: "List every note in the vault.",
-        parameters: { type: "object", properties: {} },
-        run: () =>
-          userNotes.length === 0
-            ? "The vault is empty."
-            : userNotes.map((n) => `${n.name} (${n.folder || "root"})`).join(", "),
       },
       {
         name: "remember",
@@ -1325,186 +1198,6 @@ export function AiProvider({
         run: async () => {
           const r = await compactMemory();
           return r.message;
-        },
-      },
-      {
-        name: "vault-stats",
-        usage: "/vault-stats",
-        description: "Show how full the vault is versus its budgets: max notes, max size per note, and Nex's memory usage.",
-        parameters: { type: "object", properties: {} },
-        run: () => {
-          const u = vaultUsage(vault.notes);
-          const mem = `${memory.usage.toLocaleString()} / ${memory.max.toLocaleString()} chars (${memory.facts.length} facts, ${memory.preferences.length} preferences${memory.conversations.length ? `, ${memory.conversations.length} conversations` : ""})`;
-          return `Vault: ${u.notes}/${u.maxNotes} notes · largest note ${(u.largestChars / 1024).toFixed(1)} KB (limit ${(NOTE_MAX_CHARS / 1000).toFixed(0)} KB each) · total ${(u.totalChars / 1024).toFixed(1)} KB. Nex memory: ${mem}. ${u.over ? "The vault is over budget — say /vault-cleanup." : "Everything is within budget."}`;
-        },
-      },
-      {
-        name: "vault-cleanup",
-        usage: "/vault-cleanup",
-        description: "Manage the vault when it exceeds its budgets: archive oversized notes (full version saved under _Nex/Archive) and condense them, and archive surplus orphan notes to bring the count back under the limit.",
-        parameters: { type: "object", properties: {} },
-        run: async () => {
-          const r = await runVaultTidy(vault);
-          return r.actions.join("\n");
-        },
-      },
-      {
-        name: "open-vault",
-        usage: "/open-vault",
-        description: "Open the Markdown vault and Nex's memory.",
-        parameters: { type: "object", properties: {} },
-        run: () => {
-          onNavigate("vault");
-          return "Opened the vault.";
-        },
-      },
-      {
-        name: "calendar-add",
-        usage: "/calendar-add <title> [date] [time]",
-        description: "Add an event or to-do to the calendar. Date like YYYY-MM-DD or 'tomorrow'; time like '14:30'.",
-        parameters: {
-          type: "object",
-          properties: {
-            title: { type: "string", description: "event title" },
-            date: { type: "string", description: "optional date: YYYY-MM-DD, 'today' or 'tomorrow'" },
-            time: { type: "string", description: "optional start time HH:MM" },
-          },
-          required: ["title"],
-        },
-        run: (args) => {
-          const title = String(args.title ?? "").trim();
-          if (!title) return "An event needs a title.";
-          let day = todayKey();
-          const raw = String(args.date ?? "").trim().toLowerCase();
-          if (raw && raw !== "today") {
-            if (raw === "tomorrow") {
-              const t = new Date();
-              t.setDate(t.getDate() + 1);
-              day = dateKey(t);
-            } else if (/^\d{4}-\d{2}-\d{2}$/.test(raw)) {
-              day = raw;
-            } else {
-              return `I didn't understand the date "${raw}". Use YYYY-MM-DD, 'today' or 'tomorrow'.`;
-            }
-          }
-          const time = String(args.time ?? "").trim();
-          if (time && parseTime(time) === null) return `The time "${time}" doesn't look right — use HH:MM like 14:30.`;
-          actions.addEvent({ title, date: day, start: time });
-          return `Added "${title}"${time ? ` at ${fmtTime(time)}` : ""} on ${relativeDay(day)} (${day}).`;
-        },
-      },
-      {
-        name: "calendar-today",
-        usage: "/calendar-today",
-        description: "List today's events and to-dos.",
-        parameters: { type: "object", properties: {} },
-        run: () => {
-          const day = todayKey();
-          const list = state.events
-            .filter((e) => e.date === day)
-            .sort((a, b) => eventSortKey(a).localeCompare(eventSortKey(b)));
-          if (list.length === 0) return "Nothing scheduled today — your calendar is clear.";
-          return list
-            .map((e) => `${e.done ? "[done] " : ""}${e.start ? fmtTime(e.start) : "all day"} — ${e.title}`)
-            .join(", ");
-        },
-      },
-      {
-        name: "calendar-next",
-        usage: "/calendar-next",
-        description: "Show what's coming up next on the calendar (next few events).",
-        parameters: { type: "object", properties: {} },
-        run: () => {
-          const up = state.events
-            .filter((e) => !e.done)
-            .sort((a, b) => eventSortKey(a).localeCompare(eventSortKey(b)))
-            .filter((e) => `${e.date}T${e.start || "99:99"}` >= `${todayKey()}T00:00`)
-            .slice(0, 4);
-          if (up.length === 0) return "Nothing upcoming. Say \"add to calendar\" to plan something.";
-          return up
-            .map((e) => `${relativeDay(e.date)}${e.start ? ` ${fmtTime(e.start)}` : ""} — ${e.title}`)
-            .join(", ");
-        },
-      },
-      {
-        name: "calendar-list",
-        usage: "/calendar-list <date|this week>",
-        description: "List events for a date or this week.",
-        parameters: {
-          type: "object",
-          properties: { when: { type: "string", description: "YYYY-MM-DD or 'this week'" } },
-          required: ["when"],
-        },
-        run: (args) => {
-          const when = String(args.when ?? "").trim().toLowerCase();
-          let from = todayKey();
-          let to = todayKey();
-          if (when === "this week") {
-            const d = new Date();
-            const dow = (d.getDay() + 6) % 7; // Monday start
-            d.setDate(d.getDate() - dow);
-            from = dateKey(d);
-            d.setDate(d.getDate() + 6);
-            to = dateKey(d);
-          } else if (/^\d{4}-\d{2}-\d{2}$/.test(when)) {
-            from = when;
-            to = when;
-          } else {
-            return "Say a date like YYYY-MM-DD or 'this week'.";
-          }
-          const list = state.events
-            .filter((e) => e.date >= from && e.date <= to && !e.done)
-            .sort((a, b) => eventSortKey(a).localeCompare(eventSortKey(b)));
-          if (list.length === 0) return `Nothing scheduled ${when === "this week" ? "this week" : "on " + when}.`;
-          return list
-            .map((e) => `${relativeDay(e.date)}${e.start ? ` ${fmtTime(e.start)}` : ""} — ${e.title}`)
-            .join(", ");
-        },
-      },
-      {
-        name: "calendar-done",
-        usage: "/calendar-done <title>",
-        description: "Mark an event or to-do as done by title.",
-        parameters: {
-          type: "object",
-          properties: { query: { type: "string", description: "event title to mark done" } },
-          required: ["query"],
-        },
-        run: (args) => {
-          const q = String(args.query ?? "").toLowerCase();
-          const ev = state.events.find((e) => e.title.toLowerCase().includes(q));
-          if (!ev) return `No event matching "${args.query}".`;
-          if (ev.done) return `"${ev.title}" is already done.`;
-          actions.toggleEventDone(ev.id);
-          return `Marked "${ev.title}" as done. Nice work!`;
-        },
-      },
-      {
-        name: "open-calendar",
-        usage: "/open-calendar",
-        description: "Open the calendar view.",
-        parameters: { type: "object", properties: {} },
-        run: () => {
-          onNavigate("calendar");
-          return "Opened the calendar.";
-        },
-      },
-      {
-        name: "note",
-        usage: "/note <text>",
-        description: "Save a quick voice note (goes into the Quick Tools notes pad).",
-        parameters: {
-          type: "object",
-          properties: { text: { type: "string", description: "the note to remember" } },
-          required: ["text"],
-        },
-        run: (args) => {
-          const text = String(args.text ?? "").trim();
-          if (!text) return "There's nothing to note.";
-          const stamp = new Date().toLocaleString(undefined, { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" });
-          const line = `[${stamp}] ${text}`;
-          actions.setNotes(state.notes ? `${state.notes}\n${line}` : line);
-          return `Noted.`;
         },
       },
       {
@@ -2007,9 +1700,9 @@ export function AiProvider({
          step budget (each tool result feeds the next decision), guarded by
          an overall session cap so Nex always comes back with a report. */
       const sessionStart = Date.now();
-      const MAX_STEPS = engineSession ? 90 : 8;
-      const SESSION_MS = 25 * 60_000;
-      const STEP_MS = 180_000;
+      const MAX_STEPS = engineSession ? 160 : 12;
+      const SESSION_MS = 45 * 60_000;
+      const STEP_MS = 240_000;
       let stoppedEarly: "" | "time" | "steps" | "stop" = "";
       let toolsRun = 0;
       /* The working conversation, kept so an aborted/stopped session can be

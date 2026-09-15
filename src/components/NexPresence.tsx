@@ -3,28 +3,16 @@ import { Mic, MicOff } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { PointerEvent as ReactPointerEvent } from "react";
 import { AiFace } from "./AiFace";
-import { useAi, type NexThought } from "../lib/ai";
-import { useQyn } from "../lib/store";
-import { useStats } from "../lib/stats";
-import { useSystemInfo } from "../lib/system";
-import { useVault } from "../lib/vault";
+import { useAi } from "../lib/ai";
+import type { NexThought } from "../lib/ai";
 import { useMusic } from "../lib/music";
 import type { ViewId } from "../lib/types";
-import { cn, eventSortKey, isMissed, relativeDay, todayKey } from "../lib/utils";
+import { cn } from "../lib/utils";
 
 const VIEW_LABELS: Record<ViewId, string> = {
   home: "home",
-  ai: "Nex workspace",
-  apps: "applications",
-  folders: "folders",
-  workspaces: "workspaces",
-  system: "system center",
-  files: "files",
-  tools: "quick tools",
-  vault: "vault",
-  calendar: "calendar",
+  ai: "Nex workshop",
   settings: "settings",
-  profile: "profile",
 };
 
 /**
@@ -34,34 +22,8 @@ const VIEW_LABELS: Record<ViewId, string> = {
  */
 export function NexPresence({ view, onOpen }: { view: ViewId; onOpen: () => void }) {
   const { thoughts, emotion, announce, voiceEnabled, setVoiceEnabled, react, intensity } = useAi();
-  const { state } = useQyn();
-  const stats = useStats();
-  const sys = useSystemInfo();
-  const vault = useVault();
   const music = useMusic();
-  const [nowTick, setNowTick] = useState(() => Date.now());
   const lastView = useRef<ViewId | null>(null);
-  const lastNotification = useRef<string | null>(null);
-  const lastEventAlert = useRef<string | null>(null);
-  const lastSystemAlert = useRef<string | null>(null);
-  const lastOffline = useRef(false);
-  const lastVaultCount = useRef<number | null>(null);
-
-  useEffect(() => {
-    const timer = window.setInterval(() => setNowTick(Date.now()), 30_000);
-    return () => window.clearInterval(timer);
-  }, []);
-
-  const nextEvent = useMemo(() => {
-    const now = new Date(nowTick);
-    const current = `${todayKey()}T${String(now.getHours()).padStart(2, "0")}:${String(now.getMinutes()).padStart(2, "0")}`;
-    return state.events
-      .filter((event) => !event.done && !isMissed(event))
-      .filter((event) => eventSortKey(event) >= current || event.date > todayKey())
-      .sort((a, b) => eventSortKey(a).localeCompare(eventSortKey(b)))[0] ?? null;
-  }, [state.events, nowTick]);
-
-  const missed = useMemo(() => state.events.filter(isMissed).sort((a, b) => eventSortKey(a).localeCompare(eventSortKey(b)))[0] ?? null, [state.events]);
 
   useEffect(() => {
     if (lastView.current === view) return;
@@ -73,79 +35,6 @@ export function NexPresence({ view, onOpen }: { view: ViewId; onOpen: () => void
     announce(`*looking through ${VIEW_LABELS[view]}*`);
     react({ kind: "view-change", view });
   }, [view, announce, react]);
-
-  useEffect(() => {
-    const item = state.notifications.find((notification) => !notification.read);
-    if (!item || item.id === lastNotification.current) return;
-    lastNotification.current = item.id;
-    const text = `*new notification: ${item.title}*`;
-    announce(text, undefined, item.kind === "warn");
-    react({ kind: "notification", severity: item.kind === "warn" ? "warn" : "info" });
-  }, [state.notifications, announce, react]);
-
-  useEffect(() => {
-    if (missed) {
-      const key = `missed:${missed.id}`;
-      if (key === lastEventAlert.current) return;
-      lastEventAlert.current = key;
-      announce(`*you missed ${missed.title} on ${relativeDay(missed.date)}*`, undefined, true);
-      react({ kind: "calendar", sub: "missed", id: missed.id });
-      return;
-    }
-    if (!nextEvent) return;
-    const eventTime = nextEvent?.start
-      ? new Date(`${nextEvent.date}T${nextEvent.start}:00`).getTime()
-      : nextEvent
-        ? new Date(`${nextEvent.date}T23:59:00`).getTime()
-        : 0;
-    const minutes = (eventTime - Date.now()) / 60000;
-    if (minutes >= 0 && minutes <= 30) {
-      const key = `next:${nextEvent.id}`;
-      if (key === lastEventAlert.current) return;
-      lastEventAlert.current = key;
-      announce(`*${nextEvent.title} is coming up soon*`, undefined, true);
-      react({ kind: "calendar", sub: "soon", id: nextEvent.id });
-    }
-  }, [missed, nextEvent, announce, react]);
-
-  useEffect(() => {
-    if (!stats) return;
-    const hot = stats.cpuPct >= 85 || stats.memUsedBytes / stats.memTotalBytes >= 0.88;
-    if (!hot) {
-      lastSystemAlert.current = null;
-      return;
-    }
-    const signature = `${Math.round(stats.cpuPct / 5)}:${Math.round((stats.memUsedBytes / stats.memTotalBytes) * 20)}`;
-    if (signature === lastSystemAlert.current) return;
-    lastSystemAlert.current = signature;
-    announce(`*your PC is under heavy load: ${stats.cpuPct}% CPU*`, undefined, true);
-    react({ kind: "system-load" });
-  }, [stats, announce, react]);
-
-  useEffect(() => {
-    const count = vault.notes.length;
-    if (lastVaultCount.current === null) {
-      lastVaultCount.current = count;
-      return;
-    }
-    if (count !== lastVaultCount.current && view === "vault") {
-      announce(`*the vault now has ${count} note${count === 1 ? "" : "s"}*`);
-      react({ kind: "memory-saved" });
-    }
-    lastVaultCount.current = count;
-  }, [vault.notes.length, view, announce, react]);
-
-  useEffect(() => {
-    if (sys.online) {
-      if (lastOffline.current) react({ kind: "network", on: true });
-      lastOffline.current = false;
-      return;
-    }
-    if (lastOffline.current) return;
-    lastOffline.current = true;
-    announce("*the network connection is offline*", undefined, true);
-    react({ kind: "network", on: false });
-  }, [sys.online, announce, react]);
 
   /* The Nex bubble can be dragged anywhere — it is a little companion, not
      glued to the corner. Plain clicks still work; only real drags move it. */
@@ -168,7 +57,7 @@ export function NexPresence({ view, onOpen }: { view: ViewId; onOpen: () => void
     };
   }, []);
 
-  const visibleThoughts = thoughts.slice(-4);
+  const visibleThoughts = useMemo(() => thoughts.slice(-4), [thoughts]);
 
   if (view === "home") return null;
 
@@ -225,7 +114,7 @@ export function NexPresence({ view, onOpen }: { view: ViewId; onOpen: () => void
       onPointerDown={onCardPointerDown}
       initial={{ opacity: 0, y: 10, scale: 0.96 }}
       animate={{ opacity: 1, y: 0, scale: 1 }}
-      transition={{ duration: 0.25 }}
+      transition={{ duration: 0.25, ease: [0.22, 1, 0.36, 1] }}
       style={{ touchAction: "none", ...(pos ? { left: pos.x, top: pos.y } : {}) }}
       className={cn(
         "fixed z-30 w-[184px] max-w-[calc(100vw-2rem)] cursor-grab select-none active:cursor-grabbing",
@@ -278,7 +167,7 @@ export function NexThoughtStream({ thoughts, compact = false, detached = false }
             key={thought.id}
             initial={{ opacity: 0, y: 8 }}
             animate={{ opacity: newest ? 0.94 : index === visible.length - 2 ? 0.3 : 0.12, y: 0 }}
-            transition={{ duration: 0.3 }}
+            transition={{ duration: 0.35, ease: [0.22, 1, 0.36, 1] }}
             className={
               detached
                 ? newest

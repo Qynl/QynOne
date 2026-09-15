@@ -175,7 +175,7 @@ export const SUBAGENT_LIMITS = {
   /** subagents actually working at the same time (parallel spawns beyond this queue) */
   maxConcurrent: 3,
   /** spawns per chat session before the orchestrator must consolidate — prevents uncontrolled spawning */
-  maxPerSession: 14,
+  maxPerSession: 24,
   /** per-model-call timeout inside a subagent */
   stepMs: 180_000,
   /** hard wall-clock cap per subagent */

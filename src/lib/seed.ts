@@ -1,5 +1,4 @@
 import type { Profile, QynState } from "./types";
-import { DEFAULT_HOME_ORDER } from "./widgets";
 
 /**
  * QynOne starts empty and honest.
@@ -17,8 +16,6 @@ export const DEFAULT_SETTINGS = {
   clock: true,
   battery: true,
   frontdoorAsked: false,
-  homeOrder: DEFAULT_HOME_ORDER,
-  hiddenWidgets: [] as string[],
 };
 
 export const DEFAULT_PROFILE: Profile = {

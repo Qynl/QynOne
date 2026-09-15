@@ -3,12 +3,11 @@ import { useEffect, useState } from "react";
 import { useQyn } from "../lib/store";
 import { useSystemInfo } from "../lib/system";
 import { clockTime } from "../lib/utils";
-import { NotificationCenter } from "./NotificationCenter";
 
-export function TopBar({ onOpenPalette, onHome }: { onOpenPalette: () => void; onHome: () => void }) {
+export function TopBar({ onOpenPalette }: { onOpenPalette: () => void }) {
   const { state } = useQyn();
   const sys = useSystemInfo();
-  const [time, setTime] = useState(clockTime);
+  const [time, setTime] = useState(() => clockTime());
 
   useEffect(() => {
     const t = setInterval(() => setTime(clockTime()), 1000);
@@ -20,9 +19,8 @@ export function TopBar({ onOpenPalette, onHome }: { onOpenPalette: () => void; o
 
   return (
     <header className="flex h-12 shrink-0 items-center justify-between gap-4 border-b border-white/5 px-4 md:px-6">
-      {/* Mobile brand */}
       <button
-        onClick={onHome}
+        onClick={onOpenPalette}
         className="rounded-lg px-1 text-[14px] font-bold tracking-tight text-frost-100 transition hover:text-accent md:hidden"
       >
         QynOne
@@ -57,8 +55,7 @@ export function TopBar({ onOpenPalette, onHome }: { onOpenPalette: () => void; o
             {pct}
           </div>
         )}
-        <span className="mx-1 h-1.5 w-1.5 rounded-full bg-emerald-400/80 shadow-[0_0_6px_rgba(52,211,153,0.7)]" />
-        <NotificationCenter />
+        <span className="mx-1 h-1.5 w-1.5 rounded-full bg-emerald-400/80 shadow-[0_0_6px_rgba(52,211,153,0.7)]" title="QynOne is running" />
       </div>
     </header>
   );

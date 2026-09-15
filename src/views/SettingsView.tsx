@@ -19,11 +19,10 @@ import {
   Trash2,
   Unplug,
   Upload,
-  User,
   X,
 } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
-import { Avatar, SectionHeader, Toggle, useUi } from "../components/ui";
+import { SectionHeader, Toggle, useUi } from "../components/ui";
 import { listOllamaModels, PROVIDERS, useAi } from "../lib/ai";
 import { getDesktop, isDesktop } from "../lib/desktop";
 import type { McpServerConfig, McpServerStatus, UninstallResult, UninstallScanResult } from "../lib/desktop";
@@ -32,10 +31,10 @@ import type { McpPreset } from "../lib/mcp";
 import { useQyn } from "../lib/store";
 import { visionEnabled } from "../lib/vision";
 import { ACCENT_LIST, WALLPAPER_LIST } from "../lib/theme";
-import type { AccentId, QynState, ViewId, WallpaperId } from "../lib/types";
+import type { AccentId, QynState, WallpaperId } from "../lib/types";
 import { cn, shade } from "../lib/utils";
 
-export function SettingsView({ onNavigate }: { onNavigate: (v: ViewId) => void }) {
+export function SettingsView() {
   const { state, actions } = useQyn();
   const { toast } = useUi();
   const s = state.settings;
@@ -89,30 +88,6 @@ export function SettingsView({ onNavigate }: { onNavigate: (v: ViewId) => void }
         </div>
 
         <div className="mt-7 space-y-5">
-          {/* ---- Profile ---- */}
-          <section className="glass rounded-2xl p-5">
-            <SectionHeader title="Profile" icon={<User size={13} className="text-accent" />} />
-            <div className="flex items-center justify-between gap-3">
-              <div className="flex min-w-0 items-center gap-3">
-                <Avatar name={state.profile.name} color={state.profile.color} size={44} />
-                <div className="min-w-0">
-                  <p className="truncate text-[14px] font-semibold text-frost-100">
-                    {state.profile.name || "Your profile"}
-                  </p>
-                  <p className="truncate text-[12px] text-frost-500">
-                    {state.profile.tagline || "Name, avatar & personal stats"}
-                  </p>
-                </div>
-              </div>
-              <button
-                onClick={() => onNavigate("profile")}
-                className="glass-soft inline-flex h-9 shrink-0 items-center gap-2 rounded-xl px-3.5 text-[12.5px] font-medium text-frost-300 transition hover:border-[color-mix(in_srgb,var(--accent)_35%,transparent)] hover:text-frost-100"
-              >
-                Edit profile
-              </button>
-            </div>
-          </section>
-
           {/* ---- Appearance ---- */}
           <section className="glass rounded-2xl p-5">
             <SectionHeader title="Appearance" icon={<Palette size={13} className="text-accent" />} />
