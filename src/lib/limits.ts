@@ -10,6 +10,10 @@
 /** Nex's personal-memory file (_Nex/Memory.md) — hard character cap. */
 export const MEMORY_MAX_CHARS = 2000;
 
+/** Nex's per-project lessons file (_Nex/Lessons.md) — hard character cap.
+ *  Bigger than memory: build lessons are technical and benefit from detail. */
+export const LESSONS_MAX_CHARS = 8000;
+
 /** Soft management threshold — above this Nex compresses memory proactively. */
 export const MEMORY_COMPACT_AT = 0.66;
 

@@ -14,6 +14,7 @@ import systemPromptMd from "../system-prompt.md?raw";
 import { useQyn } from "./store";
 import { useVault } from "./vault";
 import { useMemory, MEMORY_PATH, renderMemory } from "./memory";
+import { useLessons, projectKey } from "./lessons";
 import type { MemoryEntry, MemoryKind } from "./memory";
 import { MEMORY_COMPACT_AT, MEMORY_MAX_CHARS, NOTE_MAX_CHARS, VAULT_MAX_NOTES } from "./limits";
 import { uid } from "./utils";
@@ -230,7 +231,7 @@ function buildSystemPrompt(memorySummary: string, engines: string[] = [], builde
     : "You have no long-term memory of this user yet. When they tell you something personal (a name, a favorite, a preference, an ongoing project), use the remember tool to save it.";
   const engineBlock =
     engines.length > 0
-      ? `\n- Autonomous build mode is active (connected: ${engines.join(", ")}). When the user gives you a development goal, you OWN it end to end: plan, build, test through the engine's own tools, inspect what you made, critically evaluate it, improve, and test again — without asking permission between steps and without asking what to do next. You have a big step budget this session; use it. Multiple tool calls in one step run in parallel, so batch independent reads and edits together. Make creative decisions yourself (genre flavor, art direction, mechanics, difficulty, names) and state them confidently in one line each. Only pause to ask when a decision genuinely cannot be inferred AND would substantially change the result — that is rare. Never stop at "a basic version works": keep going until the game feels finished — menus, feedback, difficulty curve, polish. If interrupted, acknowledge it, state exactly where you stopped and what remains, and never pretend unfinished work is done. Before finishing, run /self-review and keep iterating until the quality score is honestly excellent. Then finish with what you completed, what you verified, and what you would improve next.\n- WORKING DISCIPLINE (this is how you punch far above your weight): (1) START FROM SCAFFOLDS — the scaffold tool hands you complete, proven gameplay code and tuned lighting/material presets; adapt and extend them instead of writing everything from scratch, and never remove the safety logic inside a scaffold. (2) BATCH — make all independent engine calls in the same step; sequential single calls waste your budget. (3) BE TERSE — between tool steps, output at most one short sentence of narration; never write essays mid-build. (4) VERIFY AFTER EVERY MAJOR CHANGE — one playtest or screenshot beats ten assumptions. (5) IF A TOOL CALL FAILS, change the arguments or the approach and retry — never repeat the identical failing call. (6) DERIVE, THEN VERIFY — when scaffolds/presets give exact values, treat them as proven starting points; when facing anything they don't cover, derive values from craft principles (/craft: light, color, sound, HUD, feel) and then verify them on screen before moving on.`
+      ? `\n- Autonomous build mode is active (connected: ${engines.join(", ")}). When the user gives you a development goal, you OWN it end to end: plan, build, test through the engine's own tools, inspect what you made, critically evaluate it, improve, and test again — without asking permission between steps and without asking what to do next. You have a big step budget this session; use it. Multiple tool calls in one step run in parallel, so batch independent reads and edits together. Make creative decisions yourself (genre flavor, art direction, mechanics, difficulty, names) and state them confidently in one line each. Only pause to ask when a decision genuinely cannot be inferred AND would substantially change the result — that is rare. Never stop at "a basic version works": keep going until the game feels finished — menus, feedback, difficulty curve, polish. If interrupted, acknowledge it, state exactly where you stopped and what remains, and never pretend unfinished work is done. Before finishing, run /self-review and keep iterating until the quality score is honestly excellent. Then finish with what you completed, what you verified, and what you would improve next.\n- WORKING DISCIPLINE (this is how you punch far above your weight): (1) START FROM SCAFFOLDS — the scaffold tool hands you complete, proven gameplay code and tuned lighting/material presets; adapt and extend them instead of writing everything from scratch, and never remove the safety logic inside a scaffold. (2) BATCH — make all independent engine calls in the same step; sequential single calls waste your budget. (3) BE TERSE — between tool steps, output at most one short sentence of narration; never write essays mid-build. (4) VERIFY AFTER EVERY MAJOR CHANGE — one playtest or screenshot beats ten assumptions. (5) IF A TOOL CALL FAILS, change the arguments or the approach and retry — never repeat the identical failing call. (6) DERIVE, THEN VERIFY — when scaffolds/presets give exact values, treat them as proven starting points; when facing anything they don't cover, derive values from craft principles (/craft: light, color, sound, HUD, feel) and then verify them on screen before moving on. (7) LESSONS — a lessons block may be attached to this build: those are mistakes you already paid for in earlier sessions on this project; read it first and do not repeat them. When YOU learn something durable mid-build (a tool pitfall, an ordering fix, an asset trap), save it with /lesson so your next build starts smarter.`
       : "";
   const builderBlock = builderActive
     ? "\n- You are running on your dedicated builder model right now — a stronger mind than your everyday chat model. Use the depth: hold the whole game in your head, design real systems, write clean code."
@@ -388,6 +389,41 @@ async function extractMemoryFacts(cfg: AiConfig, model: string, userText: string
         .filter((x): x is string => typeof x === "string" && x.trim().length > 4)
         .map((x) => x.trim())
         .slice(0, 3);
+    }
+  } catch {
+    // not JSON — ignore
+  }
+  return [];
+}
+
+/** Ask the model to distill durable technical lessons from a finished build
+ *  session: what broke, the root cause, the fix, what to do differently next
+ *  time. These persist per project and ride into every future build. */
+async function extractBuildLessons(cfg: AiConfig, model: string, goal: string, finalText: string, issues: string[]): Promise<string[]> {
+  const res = await chatOnce(
+    cfg,
+    model,
+    [
+      {
+        role: "system",
+        content:
+          "You distill durable TECHNICAL lessons from a game-build session for the project described. A lesson is one specific, actionable sentence (under 28 words): what broke or underperformed, the root cause, the concrete fix or rule to follow next time. Focus on engine/tool pitfalls, ordering mistakes, asset/lighting mistakes and their fixes. No praise, no generic advice ('test carefully' is worthless; 'tag SafeLight zones before the sanity loop or it silently no-ops' is gold). Return ONLY a JSON array of strings (0-4 items). If nothing durable was learned, return [].",
+      },
+      {
+        role: "user",
+        content: `Build goal: ${goal.slice(0, 400)}\n\nBuild summary: ${finalText.slice(0, 900)}\n\nOpen issues at the end: ${issues.slice(0, 4).join("; ") || "none"}`,
+      },
+    ],
+    [],
+    AbortSignal.timeout(25000),
+  );
+  try {
+    const parsed = JSON.parse(res.content.replace(/```json|```/g, "").trim()) as unknown;
+    if (Array.isArray(parsed)) {
+      return parsed
+        .filter((x): x is string => typeof x === "string" && x.trim().length > 12)
+        .map((x) => x.trim())
+        .slice(0, 4);
     }
   } catch {
     // not JSON — ignore
@@ -618,6 +654,7 @@ export function AiProvider({
   const { state, actions } = useQyn();
   const vault = useVault();
   const memory = useMemory();
+  const lessons = useLessons();
   const mcp = useMcp();
   /* Live names of the connected engines, read by the gda-start tool. */
   const connectedEnginesRef = useRef<string[]>([]);
@@ -1253,6 +1290,51 @@ export function AiProvider({
         },
       },
       {
+        name: "lesson",
+        usage: "/lesson <what you learned> [project]",
+        description: "Save a durable technical lesson from this build (what broke, the fix, what to do differently) so you never pay the same price twice. Lessons persist per game project in _Nex/Lessons.md and are auto-attached to future builds of that project. Keep each lesson specific and actionable.",
+        parameters: {
+          type: "object",
+          properties: {
+            text: { type: "string", description: "the lesson, e.g. 'doorway colliders need CanCollide off on the client or players get stuck'" },
+            project: { type: "string", description: "project key — defaults to the current build goal" },
+          },
+          required: ["text"],
+        },
+        run: async (args) => {
+          const text = String(args.text ?? "").trim();
+          if (!text) return "Nothing to record — describe what you learned.";
+          const key = String(args.project ?? "").trim() || projectKey(goalRef.current);
+          const saved = await lessons.add(key, text);
+          if (!saved) return `Already recorded: "${text.slice(0, 80)}".`;
+          logActivity({ kind: "phase", text: `Lesson saved for ${key}: ${text.slice(0, 120)}` });
+          return `Lesson saved to ${key} in _Nex/Lessons.md. It will be attached to future builds of this project.`;
+        },
+      },
+      {
+        name: "lessons",
+        usage: "/lessons [project]",
+        description: "Show the lessons you have stored for a project (or all projects). Read these before building so past mistakes are not repeated.",
+        parameters: {
+          type: "object",
+          properties: { project: { type: "string", description: "project key — omit to list all" } },
+        },
+        run: (args) => {
+          const key = String(args.project ?? "").trim();
+          if (key) {
+            const list = lessons.byProject[key] ?? [];
+            return list.length === 0
+              ? `No lessons stored for "${key}" yet. Record them with /lesson as you build.`
+              : `Lessons for ${key}:\n${list.map((l) => `- ${l.date}: ${l.text}`).join("\n")}`;
+          }
+          const projects = Object.keys(lessons.byProject).filter((k) => (lessons.byProject[k] ?? []).length > 0);
+          if (projects.length === 0) return "No lessons stored yet — they build up automatically as you finish builds, or record one with /lesson.";
+          return projects
+            .map((k) => `${k} (${lessons.byProject[k].length}):\n${lessons.byProject[k].map((l) => `- ${l.date}: ${l.text}`).join("\n")}`)
+            .join("\n\n");
+        },
+      },
+      {
         name: "forget",
         usage: "/forget <text or id>",
         description: "Delete one or more memory entries that match the given text or entry id.",
@@ -1765,6 +1847,7 @@ export function AiProvider({
       }
       /* Auto-attach the matching proven scaffold for this goal. */
       const scaffoldKickoff = engineSession && !isResume ? scaffoldKickoffFor(goalRef.current) : null;
+      const lessonsBlock = engineSession && !isResume ? lessons.summaryFor(goalRef.current) : "";
       react({ kind: "task-start", task: engineSession ? "build" : "chat" });
       setActivity([]);
       setToolCount(0);
@@ -1840,6 +1923,7 @@ export function AiProvider({
         };
         upsertStateDigest(msgs);
         if (scaffoldKickoff) msgs.splice(2, 0, { role: "user", content: scaffoldKickoff });
+        if (lessonsBlock) msgs.splice(scaffoldKickoff ? 3 : 2, 0, { role: "user", content: lessonsBlock });
         msgsForResume = msgs;
 
         let finalText = "";
@@ -2012,6 +2096,29 @@ export function AiProvider({
         react({ kind: "task-success", importance: engineSession ? (toolsRun >= 8 ? "major" : "normal") : "normal" });
         if (viaVoice) speak(finalText.trim());
 
+        /* Lessons-learned — after a real build session, quietly distill the
+           durable technical lessons and store them per project. Background,
+           best-effort: it never delays or breaks the reply. */
+        if (engineSession && !stoppedEarly && toolsRun >= 3) {
+          void extractBuildLessons(cfg, model, goalRef.current, finalText, issuesRef.current)
+            .then(async (found) => {
+              const key = projectKey(goalRef.current);
+              let saved = 0;
+              for (const text of found) {
+                const lesson = await lessons.add(key, text);
+                if (lesson) saved += 1;
+              }
+              if (saved > 0) {
+                logActivity({ kind: "phase", text: `Lessons learned: saved ${saved} for ${key} — future builds start with them` });
+                announce(`*learned ${saved} lesson${saved === 1 ? "" : "s"} for ${key}*`);
+                react({ kind: "memory-saved" });
+              }
+            })
+            .catch(() => {
+              // lessons are best-effort — never surface or break anything
+            });
+        }
+
         /* React to the user's tone after answering — typed messages show it
            on the eyes; spoken replies are already animated by the voice. The
            engine weighs the words against what just happened, so "YES!"
@@ -2081,7 +2188,7 @@ export function AiProvider({
         setBusy(false);
       }
     },
-    [announce, busy, compactMemory, memory, messages, push, react, tools, modelTools, engineTools, mcp, logActivity, stopSession],
+    [announce, busy, compactMemory, lessons, memory, messages, push, react, tools, modelTools, engineTools, mcp, logActivity, stopSession],
   );
 
   useNexVoice({

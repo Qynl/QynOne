@@ -83,6 +83,7 @@ bun run dist:win
 | Your environment (settings, appearance, connections) | Saved automatically to `%APPDATA%\QynOne\qynone-state.json` — plain, human-readable, no cloud, no account. |
 | AI settings (provider, endpoint, model, API key) | Saved to `%APPDATA%\QynOne\qynone.env` — the key never leaves the machine. |
 | Memory & scratchpad | Plain Markdown files inside QynOne's own data folder — you can read, edit or erase every line. |
+| Lessons-learned | After every build Nex distills durable technical lessons into `_Nex/Lessons.md`, one section per game project — future builds of that project start with them attached, so the same mistake is never paid for twice. |
 | MCP engine connections | Server configs saved to `%APPDATA%\QynOne\qynone-mcp.json`. The client connects over stdio (Roblox) or localhost HTTP (Unreal) at user level — nothing leaves the PC, and engine tool calls go straight to the open editor. |
 | Amazon Music | Nex opens the installed Amazon Music app for you — the only PC interaction outside MCP, and play/search only. |
 
