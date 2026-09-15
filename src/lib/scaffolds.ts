@@ -266,6 +266,358 @@ task.spawn(function()
 	end
 end)`;
 
+const RACING_LUAU = `-- QynOne scaffold: racing — ordered checkpoints, lap gate, best-time tracking.
+-- Name checkpoints "0" (start/finish) then "1".."N" in track order.
+
+local players = game:GetService("Players")
+local checkpoints = workspace:WaitForChild("Checkpoints")
+
+local LAPS = 3
+local RACE = {} -- [player] = { cp = 0, lap = 1, t0 = 0, best = nil }
+local lastCp = 0
+for _, cp in ipairs(checkpoints:GetChildren()) do
+	local n = tonumber(cp.Name)
+	if n and n > lastCp then lastCp = n end
+end
+
+local function startRace(player, keepBest)
+	RACE[player] = { cp = 0, lap = 1, t0 = os.clock(), best = keepBest and RACE[player] and RACE[player].best or nil }
+end
+
+players.PlayerAdded:Connect(function(player)
+	local stats = Instance.new("Folder")
+	stats.Name = "leaderstats"
+	local lap = Instance.new("IntValue"); lap.Name = "Lap"; lap.Parent = stats
+	local best = Instance.new("NumberValue"); best.Name = "BestTime"; best.Parent = stats
+	stats.Parent = player
+	player.CharacterAdded:Connect(function(char)
+		task.wait(0.2)
+		startRace(player, true)
+		local spawn = checkpoints:FindFirstChild("0")
+		if spawn and char:FindFirstChild("HumanoidRootPart") then
+			char:PivotTo(spawn.CFrame + Vector3.new(0, 4, 0))
+		end
+	end)
+end)
+
+players.PlayerRemoving:Connect(function(player) RACE[player] = nil end)
+
+for _, cp in ipairs(checkpoints:GetChildren()) do
+	cp.Touched:Connect(function(hit)
+		local player = players:GetPlayerFromCharacter(hit.Parent)
+		local r = player and RACE[player]
+		if not r then return end
+		local n = tonumber(cp.Name)
+		if n == r.cp + 1 then
+			r.cp = n -- must be touched in order — cutting the track does not count
+		elseif n == 0 and r.cp == lastCp then
+			local t = os.clock() - r.t0
+			if not r.best or t < r.best then
+				r.best = t
+				player.leaderstats.BestTime.Value = math.floor(t * 100) / 100
+			end
+			r.lap += 1
+			if r.lap > LAPS then r.lap = 1 end
+			player.leaderstats.Lap.Value = r.lap
+			r.cp = 0
+			r.t0 = os.clock()
+		end
+	end)
+end
+
+-- Boost pads: tag any part "Boost" — a forward impulse when driven over.
+for _, pad in ipairs(workspace:GetTagged("Boost")) do
+	pad.Touched:Connect(function(hit)
+		local hrp = hit.Parent and hit.Parent:FindFirstChild("HumanoidRootPart")
+		if hrp then hrp.AssemblyLinearVelocity += hrp.CFrame.LookVector * 40 end
+	end)
+end`;
+
+const TYCOON_LUAU = `-- QynOne scaffold: co-op tycoon — droppers, collector, paid unlocks.
+-- Layout: workspace.Droppers/<any> (child "DropPart", attrs Rate+Value),
+-- workspace.Collector, workspace.Locked/<Model> hidden until bought,
+-- buttons tagged "Unlock" with attrs Cost + Target (model name).
+
+local players = game:GetService("Players")
+local Debris = game:GetService("Debris")
+local cash = {} -- [player] = leaderstats.Cash IntValue
+
+players.PlayerAdded:Connect(function(player)
+	local stats = Instance.new("Folder")
+	stats.Name = "leaderstats"
+	local c = Instance.new("IntValue"); c.Name = "Cash"; c.Parent = stats
+	stats.Parent = player
+	cash[player] = c
+end)
+players.PlayerRemoving:Connect(function(p) cash[p] = nil end)
+
+-- Droppers spawn ore parts on their own Rate clock.
+for _, dropper in ipairs(workspace:WaitForChild("Droppers"):GetChildren()) do
+	local part = dropper:FindFirstChild("DropPart")
+	if part then
+		local rate = dropper:GetAttribute("Rate") or 2
+		local value = dropper:GetAttribute("Value") or 1
+		task.spawn(function()
+			while dropper.Parent do
+				local ore = Instance.new("Part")
+				ore.Size = Vector3.new(1, 1, 1)
+				ore.Color = dropper:GetAttribute("OreColor") or Color3.fromRGB(200, 160, 60)
+				ore.Material = Enum.Material.CorrodedMetal
+				ore:SetAttribute("Value", value)
+				ore.CFrame = part.CFrame - Vector3.new(0, 2, 0)
+				ore.Parent = workspace
+				Debris:AddItem(ore, 20)
+				task.wait(rate)
+			end
+		end)
+	end
+end
+
+-- Collector: credits players standing near it, destroys the ore.
+local collector = workspace:WaitForChild("Collector")
+collector.Touched:Connect(function(hit)
+	local ore = hit.Parent
+	local value = ore and ore:GetAttribute("Value")
+	if not value then return end
+	for _, player in ipairs(players:GetPlayers()) do
+		local char = player.Character
+		local hrp = char and char:FindFirstChild("HumanoidRootPart")
+		if hrp and (hrp.Position - collector.Position).Magnitude < 14 then
+			cash[player].Value += value
+		end
+	end
+	ore:Destroy()
+end)
+
+-- Unlock buttons: pay Cash, the hidden model moves into the workspace.
+for _, button in ipairs(workspace:GetTagged("Unlock")) do
+	local prompt = Instance.new("ProximityPrompt")
+	prompt.ActionText = "Unlock (" .. (button:GetAttribute("Cost") or 0) .. ")"
+	prompt.Parent = button
+	prompt.Triggered:Connect(function(player)
+		local cost = button:GetAttribute("Cost") or 0
+		local mine = cash[player]
+		if not mine or mine.Value < cost then return end
+		mine.Value -= cost
+		local locked = workspace:FindFirstChild("Locked")
+		local target = locked and locked:FindFirstChild(button:GetAttribute("Target") or "")
+		if target then target.Parent = workspace end
+		button:Destroy()
+	end)
+end`;
+
+const SHOOTER_LUAU = `-- QynOne scaffold: arena shooter — loadouts, kill credit, auto-respawn.
+-- Needs ReplicatedStorage.Weapons (folder of Tool templates). Weapons must
+-- tag their victims: create an ObjectValue named "creator" (Value = killer
+-- Player) inside the hit Humanoid — the classic Roblox kill-credit pattern.
+
+local players = game:GetService("Players")
+local RS = game:GetService("ReplicatedStorage")
+local wep = RS:FindFirstChild("Weapons")
+local RESPAWN_DELAY = 3
+
+local function giveLoadout(player)
+	if not wep then return end
+	local backpack = player:FindFirstChildOfClass("Backpack")
+	if not backpack then return end
+	for _, name in ipairs({ "Blaster", "Sniper" }) do
+		local tool = wep:FindFirstChild(name)
+		if tool then tool:Clone().Parent = backpack end
+	end
+end
+
+players.PlayerAdded:Connect(function(player)
+	local stats = Instance.new("Folder")
+	stats.Name = "leaderstats"
+	local k = Instance.new("IntValue"); k.Name = "Kills"; k.Parent = stats
+	local d = Instance.new("IntValue"); d.Name = "Deaths"; d.Parent = stats
+	stats.Parent = player
+	player.CharacterAdded:Connect(function(char)
+		local hum = char:WaitForChild("Humanoid")
+		task.wait(0.1)
+		giveLoadout(player)
+		hum.Died:Connect(function()
+			player.leaderstats.Deaths.Value += 1
+			local creator = hum:FindFirstChild("creator")
+			local killer = creator and creator.Value
+			if killer and killer.Parent and killer:FindFirstChild("leaderstats") then
+				killer.leaderstats.Kills.Value += 1
+			end
+			task.wait(RESPAWN_DELAY)
+			if player.Parent then player:LoadCharacter() end
+		end)
+	end)
+end)`;
+
+const HUD_LUAU = `-- QynOne scaffold: player HUD (LocalScript in StarterPlayer.StarterPlayerScripts).
+-- Health + stamina bars, sprint with smooth FOV kick, animated counter.
+-- This is the polish layer players FEEL first — ship it in every game.
+
+local players = game:GetService("Players")
+local run = game:GetService("RunService")
+local uis = game:GetService("UserInputService")
+
+local player = players.LocalPlayer
+local gui = Instance.new("ScreenGui")
+gui.Name = "QynHUD"; gui.ResetOnSpawn = false; gui.IgnoreGuiInset = true
+gui.Parent = player:WaitForChild("PlayerGui")
+
+local function makeBar(color, yPos)
+	local bg = Instance.new("Frame")
+	bg.AnchorPoint = Vector2.new(0, 1); bg.Position = UDim2.new(0, 24, 1, yPos)
+	bg.Size = UDim2.new(0, 260, 0, 14)
+	bg.BackgroundColor3 = Color3.fromRGB(15, 17, 24); bg.BackgroundTransparency = 0.25
+	bg.BorderSizePixel = 0
+	local corner = Instance.new("UICorner"); corner.CornerRadius = UDim.new(0, 7); corner.Parent = bg
+	local fill = Instance.new("Frame")
+	fill.Size = UDim2.fromScale(1, 1); fill.BackgroundColor3 = color; fill.BorderSizePixel = 0
+	local fc = Instance.new("UICorner"); fc.CornerRadius = UDim.new(0, 7); fc.Parent = fill
+	fill.Parent = bg
+	bg.Parent = gui
+	return fill
+end
+
+local healthFill = makeBar(Color3.fromRGB(96, 210, 130), -24)
+local staminaFill = makeBar(Color3.fromRGB(90, 160, 255), -46)
+
+local counter = Instance.new("TextLabel")
+counter.AnchorPoint = Vector2.new(1, 0); counter.Position = UDim2.new(1, -24, 0, 20)
+counter.Size = UDim2.new(0, 220, 0, 34); counter.BackgroundTransparency = 1
+counter.TextColor3 = Color3.fromRGB(235, 240, 250); counter.Font = Enum.Font.GothamBold
+counter.TextSize = 24; counter.TextXAlignment = Enum.TextXAlignment.Right
+counter.Text = "0"; counter.Parent = gui
+
+local function bindHumanoid(char)
+	local hum = char:WaitForChild("Humanoid")
+	run.Heartbeat:Connect(function()
+		healthFill.Size = UDim2.fromScale(math.clamp(hum.Health / math.max(hum.MaxHealth, 1), 0, 1), 1)
+	end)
+end
+if player.Character then bindHumanoid(player.Character) end
+player.CharacterAdded:Connect(bindHumanoid)
+
+-- Sprint: hold LeftShift, drains stamina, smooth FOV kick sells the speed.
+local sprinting = false
+uis.InputBegan:Connect(function(i, g) if not g and i.KeyCode == Enum.KeyCode.LeftShift then sprinting = true end end)
+uis.InputEnded:Connect(function(i) if i.KeyCode == Enum.KeyCode.LeftShift then sprinting = false end end)
+
+local STAMINA_MAX, FOV_BASE = 100, 70
+local stam = STAMINA_MAX
+run.RenderStepped:Connect(function(dt)
+	local hum = player.Character and player.Character:FindFirstChildOfClass("Humanoid")
+	local cam = workspace.CurrentCamera
+	if hum and cam then
+		local want = sprinting and stam > 0 and hum.MoveDirection.Magnitude > 0
+		hum.WalkSpeed = want and 24 or 16
+		stam = math.clamp(stam + (want and -28 or 18) * dt, 0, STAMINA_MAX)
+		staminaFill.Size = UDim2.fromScale(stam / STAMINA_MAX, 1)
+		local fov = FOV_BASE + (want and 8 or 0)
+		cam.FieldOfView += (fov - cam.FieldOfView) * math.min(dt * 8, 1)
+	end
+end)
+
+-- Animated counter: server fires ReplicatedStorage.CoinCount(number) on pickup.
+local rs = game:GetService("ReplicatedStorage")
+local coinEvent = rs:FindFirstChild("CoinCount")
+if coinEvent then
+	coinEvent.OnClientEvent:Connect(function(value)
+		local start = tonumber(counter.Text) or 0
+		for i = 1, 12 do
+			task.wait(0.03)
+			counter.Text = tostring(math.floor(start + (value - start) * i / 12))
+		end
+		counter.Text = tostring(value)
+	end)
+end`;
+
+const TITLE_LUAU = `-- QynOne scaffold: title screen (LocalScript in StarterPlayer.StarterPlayerScripts).
+-- Camera orbit behind a dark menu layer, Play button with hover lift and
+-- a clean fade-out. A real menu is the cheapest way to look like a real game.
+
+local players = game:GetService("Players")
+local tween = game:GetService("TweenService")
+local run = game:GetService("RunService")
+
+local player = players.LocalPlayer
+local camera = workspace.CurrentCamera
+
+local gui = Instance.new("ScreenGui")
+gui.Name = "TitleScreen"; gui.IgnoreGuiInset = true; gui.ResetOnSpawn = false
+gui.Parent = player:WaitForChild("PlayerGui")
+
+local shade = Instance.new("Frame")
+shade.Size = UDim2.fromScale(1, 1)
+shade.BackgroundColor3 = Color3.fromRGB(8, 10, 16); shade.BackgroundTransparency = 0.35
+shade.BorderSizePixel = 0; shade.Parent = gui
+
+local title = Instance.new("TextLabel")
+title.AnchorPoint = Vector2.new(0.5, 0); title.Position = UDim2.fromScale(0.5, 0.22)
+title.Size = UDim2.fromScale(0.8, 0.16); title.BackgroundTransparency = 1
+title.Text = "GAME TITLE" -- set the real name here
+title.TextColor3 = Color3.fromRGB(240, 244, 252); title.Font = Enum.Font.GothamBlack
+title.TextScaled = true; title.Parent = gui
+
+local play = Instance.new("TextButton")
+play.AnchorPoint = Vector2.new(0.5, 0); play.Position = UDim2.fromScale(0.5, 0.52)
+play.Size = UDim2.fromScale(0.22, 0.09)
+play.BackgroundColor3 = Color3.fromRGB(70, 130, 255); play.BackgroundTransparency = 0.15
+play.Text = "PLAY"; play.TextColor3 = Color3.fromRGB(255, 255, 255)
+play.Font = Enum.Font.GothamBold; play.TextScaled = true; play.AutoButtonColor = false
+play.Parent = gui
+local pc = Instance.new("UICorner"); pc.CornerRadius = UDim.new(0, 12); pc.Parent = play
+
+play.MouseEnter:Connect(function()
+	tween:Create(play, TweenInfo.new(0.15), { Size = UDim2.fromScale(0.235, 0.1) }):Play()
+end)
+play.MouseLeave:Connect(function()
+	tween:Create(play, TweenInfo.new(0.15), { Size = UDim2.fromScale(0.22, 0.09) }):Play()
+end)
+
+-- Slow orbit around a showcase spot; drop a part named "MenuFocus" there.
+local focus = workspace:FindFirstChild("MenuFocus")
+local center = focus and focus.Position or Vector3.new(0, 10, 0)
+local angle = 0
+run.RenderStepped:Connect(function(dt)
+	angle += dt * 0.15
+	camera.CFrame = CFrame.new(center + Vector3.new(math.sin(angle) * 26, 8, math.cos(angle) * 26), center)
+end)
+
+play.MouseButton1Click:Connect(function()
+	local s = Instance.new("Sound")
+	s.SoundId = "rbxassetid://607665037"; s.Volume = 0.5; s.Parent = play; s:Play()
+	tween:Create(shade, TweenInfo.new(0.5), { BackgroundTransparency = 1 }):Play()
+	tween:Create(title, TweenInfo.new(0.4), { TextTransparency = 1 }):Play()
+	tween:Create(play, TweenInfo.new(0.35), { BackgroundTransparency = 1, TextTransparency = 1 }):Play()
+	task.delay(0.55, function() gui:Destroy() end) -- menu gone, orbit stops with it
+end)`;
+
+/* ------------------------------------------------------------------ */
+/* Audio — verified IDs only. Small models invent random asset IDs that */
+/* are usually private or deleted → a silent game, the #1 audio bug.    */
+/* ------------------------------------------------------------------ */
+
+export const AUDIO_LIBRARY = `Audio that always works:
+- rbxassetid://12221967 — soft chime (checkpoint/win) — Roblox-owned, verified
+- rbxassetid://607665037 — UI pop/click (buttons/pickups) — Roblox-owned, verified
+For everything else, use Roblox's built-in Creator Store Audio tab (official
+Roblox-published sound effects are public and safe): search "heartbeat",
+"wind loop", "riser", "crowd cheer". NEVER hardcode unknown IDs — an invalid
+or private ID plays silence. Pitch-shift verified sounds (PlaybackSpeed
+0.7–1.3) for cheap variety.`;
+
+/* ------------------------------------------------------------------ */
+/* Self-review rubric — score against a checklist, not vibes.           */
+/* ------------------------------------------------------------------ */
+
+export const SELF_REVIEW_RUBRIC = `Score against this checklist — every unchecked item is an issue:
+- GAMEPLAY: core loop fun within 60 seconds? Win/lose obvious? Every action gives sound + visual feedback?
+- VISUALS: zero default-gray parts? One cohesive palette + a lighting preset applied? First screenshot marketable?
+- FEEL: movement tuned (speed/jump)? Camera comfortable? Hits and pickups have impact?
+- AUDIO: ambience present? Actions never silent?
+- STABILITY: zero red console errors after 2 minutes of play? Respawn and rejoin safe? No loop without task.wait?
+- COMPLETENESS: title menu → play → win/lose → replay works end to end?
+9-10 = every box checked. 7-8 = gameplay + visuals checked, polish missing. Below 7 = loop incomplete.`;
+
 /* ------------------------------------------------------------------ */
 /* Scene presets — tuned value sets, not advice                        */
 /* ------------------------------------------------------------------ */
@@ -329,8 +681,13 @@ export const SCENE_PRESETS: ScenePreset[] = [
 export const SCAFFOLDS: Scaffold[] = [
   { id: "obby", genres: ["obby", "parkour", "platformer", "course"], engines: ["roblox"], label: "Obby / checkpoint course", provides: ["checkpoint loop", "spawn recovery", "progress feedback sound"], code: OBBY_LUAU },
   { id: "survival", genres: ["survival", "round", "wave", "battle"], engines: ["roblox"], label: "Round-based survival", provides: ["full round state machine", "lobby → active → ending", "win/lose handling"], code: SURVIVAL_LUAU },
-  { id: "collect", genres: ["collector", "tycoon", "simulator", "clicker"], engines: ["roblox"], label: "Collect & sell loop", provides: ["leaderstats", "capacity pressure", "sell/upgrade loop", "pickup feedback"], code: COLLECT_LUAU },
+  { id: "collect", genres: ["collector", "simulator", "clicker"], engines: ["roblox"], label: "Collect & sell loop", provides: ["leaderstats", "capacity pressure", "sell/upgrade loop", "pickup feedback"], code: COLLECT_LUAU },
   { id: "horror", genres: ["horror", "scary", "haunt", "creepy"], engines: ["roblox"], label: "Horror tension loop", provides: ["horror lighting block", "sanity system", "stalker AI (Weeping-Angel rule)"], code: HORROR_LUAU },
+  { id: "racing", genres: ["racing", "race", "driving", "kart"], engines: ["roblox"], label: "Racing with laps + best times", provides: ["ordered checkpoint laps", "best-time leaderstat", "boost pads"], code: RACING_LUAU },
+  { id: "tycoon", genres: ["tycoon", "factory", "idle"], engines: ["roblox"], label: "Tycoon (droppers + unlocks)", provides: ["dropper ore loop", "collector payout", "paid ProximityPrompt unlocks"], code: TYCOON_LUAU },
+  { id: "shooter", genres: ["shooter", "fps", "pvp", "gun"], engines: ["roblox"], label: "Arena shooter core", provides: ["loadout giving", "kill credit (creator tag)", "auto-respawn + K/D leaderstats"], code: SHOOTER_LUAU },
+  { id: "hud", genres: ["hud", "interface", "health bar"], engines: ["roblox"], label: "Player HUD (polish layer)", provides: ["health + stamina bars", "sprint with smooth FOV kick", "animated counter"], code: HUD_LUAU },
+  { id: "title", genres: ["menu", "title", "main menu", "loading"], engines: ["roblox"], label: "Title screen (polish layer)", provides: ["camera orbit menu backdrop", "Play button with hover + click sound", "clean fade into gameplay"], code: TITLE_LUAU },
 ];
 
 /** Pick the best scaffold for a goal text (id or genre mention). */
@@ -346,29 +703,72 @@ export function pickScaffold(goal: string): Scaffold | null {
   return best?.s ?? null;
 }
 
-/** Pick the best scene preset for a goal text. */
+/** Every scaffold genre resolves to a concrete visual direction, so a goal
+ *  that names any known genre never gets invented-from-zero lighting. */
+const SCAFFOLD_PRESET_FALLBACK: Record<string, string> = {
+  obby: "sunny-adventure",
+  survival: "sunny-adventure",
+  collect: "sunny-adventure",
+  horror: "horror-night",
+  racing: "neon-city",
+  tycoon: "neon-city",
+  shooter: "neon-city",
+  hud: "cozy-interior",
+  title: "cozy-interior",
+};
+
+/** Pick the best scene preset for a goal text. Falls back through a mood
+ *  matrix and then the scaffold catalog so EVERY build goal gets a concrete
+ *  visual direction — a small model should never invent lighting values. */
 export function pickPreset(goal: string): ScenePreset | null {
   const g = goal.toLowerCase();
   const table: Array<[string, string]> = [
-    ["horror", "horror-night"],
-    ["scary", "horror-night"],
-    ["creepy", "horror-night"],
-    ["night", "horror-night"],
+    // Strong scene nouns first — "night city" must stay neon, not horror.
     ["city", "neon-city"],
     ["cyber", "neon-city"],
     ["neon", "neon-city"],
     ["futur", "neon-city"],
+    ["space", "neon-city"],
+    ["racing", "neon-city"],
+    ["car", "neon-city"],
+    ["kart", "neon-city"],
     ["cozy", "cozy-interior"],
     ["house", "cozy-interior"],
     ["home", "cozy-interior"],
     ["cabin", "cozy-interior"],
+    ["restaurant", "cozy-interior"],
+    ["store", "cozy-interior"],
+    ["tycoon", "cozy-interior"],
     ["adventure", "sunny-adventure"],
     ["sunny", "sunny-adventure"],
     ["bright", "sunny-adventure"],
     ["grass", "sunny-adventure"],
+    ["obby", "sunny-adventure"],
+    ["parkour", "sunny-adventure"],
+    ["island", "sunny-adventure"],
+    ["nature", "sunny-adventure"],
+    // Mood keywords last — they are the weakest signals.
+    ["horror", "horror-night"],
+    ["scary", "horror-night"],
+    ["creepy", "horror-night"],
+    ["haunt", "horror-night"],
+    ["mansion", "horror-night"],
+    ["ghost", "horror-night"],
+    ["night", "horror-night"],
+    ["dark", "horror-night"],
   ];
   for (const [kw, id] of table) {
     if (g.includes(kw)) return SCENE_PRESETS.find((p) => p.id === id) ?? null;
   }
+  const sc = pickScaffold(goal);
+  if (sc) {
+    const id = SCAFFOLD_PRESET_FALLBACK[sc.id];
+    if (id) return SCENE_PRESETS.find((p) => p.id === id) ?? null;
+  }
   return null;
+}
+
+/** The self-review checklist text, for injection into review prompts. */
+export function pickRubric(): string {
+  return SELF_REVIEW_RUBRIC;
 }

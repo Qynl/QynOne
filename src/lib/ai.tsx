@@ -8,7 +8,7 @@ import { apiContentFor, extractVisionData, hasImages, stripImagesFromMessages, v
 import { useNexEmotions } from "./emotion";
 import type { EmotionDebug, NexEvent } from "./emotion";
 import { clearNowPlaying, playOnAmazonMusic, setNowPlaying } from "./music";
-import { pickPreset, pickScaffold } from "./scaffolds";
+import { pickPreset, pickRubric, pickScaffold } from "./scaffolds";
 import systemPromptMd from "../system-prompt.md?raw";
 import { useQyn } from "./store";
 import { useVault } from "./vault";
@@ -350,6 +350,8 @@ function scaffoldKickoffFor(goal: string): string | null {
     sc ? `Scaffold "${sc.label}" — already provides: ${sc.provides.join(", ")}. Adapt this code first; keep its checkpoint/state/safety logic intact. Do not rewrite it from scratch unless the design genuinely requires it.` : "",
     sc ? sc.code : "",
     preset ? `Scene preset "${preset.label}" (${preset.mood}) — copy these exact values into the engine:\nLIGHTING: ${preset.lighting}\nMATERIALS: ${preset.materials}\nAUDIO: ${preset.audio}` : "",
+    "AUDIO RULE: only rbxassetid://12221967 (chime) and rbxassetid://607665037 (pop) are pre-verified; for all other sounds search Roblox's official Creator Store audio — never hardcode unknown IDs, they play silence.",
+    "POLISH MANDATE: every game ships with the hud scaffold (health/stamina bars, sprint FOV kick) and the title scaffold (menu + orbit + fade). Pull both via the scaffold tool and adapt them to the game.",
   ].filter(Boolean).join("\n\n");
 }
 
@@ -1160,18 +1162,18 @@ export function AiProvider({
     return [
       {
         name: "scaffold",
-        usage: "/scaffold <obby|survival|collect|horror>",
-        description: "Get a complete, proven gameplay skeleton plus a tuned lighting/material preset for the genre. Returns runnable code and exact engine values — adapt them, do not rebuild from scratch and do not remove scaffold safety logic.",
+        usage: "/scaffold <obby|survival|collect|horror|racing|tycoon|shooter|hud|title>",
+        description: "Get a complete, proven gameplay/polish skeleton plus a tuned lighting/material preset for the genre. Returns runnable code and exact engine values — adapt them, do not rebuild from scratch and do not remove scaffold safety logic. The hud and title scaffolds are the universal polish layer: ship both in every game.",
         parameters: {
           type: "object",
-          properties: { genre: { type: "string", description: "obby, survival, collect or horror" } },
+          properties: { genre: { type: "string", description: "obby, survival, collect, horror, racing, tycoon, shooter, hud or title" } },
           required: ["genre"],
         },
         run: (args) => {
           const q = String(args.genre ?? args.query ?? "");
           const s = pickScaffold(q);
           const p = pickPreset(`${goalRef.current} ${q}`);
-          if (!s && !p) return `No scaffold matches "${q}". Available: obby, survival, collect, horror. Presets: horror-night, sunny-adventure, neon-city, cozy-interior. Build from scratch, but copy exact lighting/material values from the presets where they fit.`;
+          if (!s && !p) return `No scaffold matches "${q}". Available: obby, survival, collect, horror, racing, tycoon, shooter, hud, title — the hud and title scaffolds ship in EVERY game (players feel polish before content). Build the genre core from scratch, then pull hud + title.`;
           return [
             s ? `SCAFFOLD: ${s.label} — already provides: ${s.provides.join(", ")}. Adapt this code; keep its checkpoint/state/safety logic intact.` : "",
             s ? s.code : "",
@@ -1334,7 +1336,7 @@ export function AiProvider({
         name: "self-review",
         usage: "/self-review",
         description:
-          "Critically evaluate the work you just built in the connected engine before you finish. Call this whenever you complete a significant chunk of work or before writing your final summary: The bar is EXTREMELY high: quality means a game people actually want — fun, polished, good-looking and stable — not merely one that works. Score 9-10 only when you would proudly ship it; 7-8 means functional but not good enough (keep improving); below 7 means clearly unfinished. Be brutally honest — a low score never means you give up, it means you keep working until it's genuinely great.",
+          `Critically evaluate the work you just built in the connected engine before you finish. Call this whenever you complete a significant chunk of work or before writing your final summary. The bar is EXTREMELY high: quality means a game people actually want — fun, polished, good-looking and stable — not merely one that works. Score against this checklist (every unchecked box is an issue): ${pickRubric()} 9-10 only when you would proudly ship it; 7-8 means functional but not good enough (keep improving); below 7 means clearly unfinished. Be brutally honest — a low score never means you give up, it means you keep working until it's genuinely great.`,
         parameters: {
           type: "object",
           properties: {
@@ -1365,7 +1367,7 @@ export function AiProvider({
           if (count >= 5) {
             return `Self-review #${count} recorded: quality ${quality}/10. The session's review budget is spent, so fix the single most important issue${issues.length ? ` (${issues[0]})` : ""}, test once more, then write your final honest summary — including exactly what remains below the quality bar.`;
           }
-          return `Self-review #${count} recorded: quality ${quality}/10 — this is NOT good enough to finish yet. Your own issues: ${issues.length ? issues.join("; ") : "(none listed)"}. Next up, in order: ${next.length ? next.join(" → ") : "fix the issues above"}. Continue working: address them, test again in the engine, then call self-review again. The user wants a real, polished, fun game — not a demo.`;
+          return `Self-review #${count} recorded: quality ${quality}/10 — this is NOT good enough to finish yet. Your own issues: ${issues.length ? issues.join("; ") : "(none listed)"}. Next up, in order: ${next.length ? next.join(" → ") : "fix the issues above"}. Continue working: address them, test again in the engine, then call self-review again. The user wants a real, polished, fun game — not a demo.${count === 1 ? `\n\n${pickRubric()}` : ""}`;
         },
       },
       {
