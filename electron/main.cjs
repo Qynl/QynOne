@@ -979,6 +979,10 @@ ipcMain.handle("qyn:ai-config-get", async () => {
       endpoint: env.QYNONE_AI_ENDPOINT || "",
       model: env.QYNONE_AI_MODEL || "",
       key: env.QYNONE_AI_KEY || "",
+      builderProvider: env.QYNONE_AI_BUILDER_PROVIDER || "",
+      builderEndpoint: env.QYNONE_AI_BUILDER_ENDPOINT || "",
+      builderModel: env.QYNONE_AI_BUILDER_MODEL || "",
+      builderKey: env.QYNONE_AI_BUILDER_KEY || "",
     };
   } catch {
     return null;
@@ -993,6 +997,10 @@ ipcMain.handle("qyn:ai-config-set", async (_event, cfg) => {
       `QYNONE_AI_ENDPOINT=${String(c.endpoint || "")}`,
       `QYNONE_AI_MODEL=${String(c.model || "")}`,
       `QYNONE_AI_KEY=${String(c.key || "")}`,
+      `QYNONE_AI_BUILDER_PROVIDER=${String(c.builderProvider || "").replace(/[^a-z0-9_-]/gi, "")}`,
+      `QYNONE_AI_BUILDER_ENDPOINT=${String(c.builderEndpoint || "")}`,
+      `QYNONE_AI_BUILDER_MODEL=${String(c.builderModel || "")}`,
+      `QYNONE_AI_BUILDER_KEY=${String(c.builderKey || "")}`,
     ];
     const file = aiConfigFile();
     await fsPromises.mkdir(path.dirname(file), { recursive: true });

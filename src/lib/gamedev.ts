@@ -209,8 +209,8 @@ const FULL_PHASES: PhaseDef[] = [
     "world",
     "Assets & World",
     "builder",
-    "Build the world: level layout, lighting, atmosphere, environment, art direction, spawns. Make it look intentional — not default or empty.",
-    "The scene exists in the engine; lighting/atmosphere are set deliberately; a screen capture was reviewed and matches the art direction.",
+    "Build the world: level layout, lighting, atmosphere, environment, art direction, spawns. Asset quality is not negotiable: no default/untextured assets — every surface gets deliberate materials and colors from a small cohesive palette; lighting is composed (key/fill/ambient, fog, bloom, shadows) to set the mood; props use real meshes with detail variation, not primitive blocks; sound design (ambience, interaction feedback, stingers) is part of this phase. Make it look intentional and shoppable — the first screenshot should be marketable.",
+    "The scene exists in the engine; every placed asset has deliberate materials/lighting applied (no engine-gray defaults); a screen capture was reviewed and matches the art direction; ambience audio exists.",
   ),
   phase(
     "gameplay",

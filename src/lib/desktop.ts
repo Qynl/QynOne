@@ -96,6 +96,13 @@ export interface AiConfig {
   /** Send screenshots/photos to the model as real images (defaults by
    *  provider when unset: on for OpenAI/custom, off for Ollama). */
   vision?: boolean;
+  /** Dedicated builder model for engine builds (Roblox/Unreal sessions and
+   *  their subagents). When set, AAA work runs on this — usually a frontier
+   *  cloud model — while everyday chat stays on the main model. */
+  builderProvider?: string;
+  builderEndpoint?: string;
+  builderModel?: string;
+  builderKey?: string;
 }
 
 export type McpTransport = "stdio" | "http";

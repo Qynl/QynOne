@@ -25,7 +25,7 @@ import { useEffect, useRef, useState } from "react";
 import { SectionHeader, Toggle, useUi } from "../components/ui";
 import { listOllamaModels, PROVIDERS, useAi } from "../lib/ai";
 import { getDesktop, isDesktop } from "../lib/desktop";
-import type { McpServerConfig, McpServerStatus, UninstallResult, UninstallScanResult } from "../lib/desktop";
+import type { AiConfig, McpServerConfig, McpServerStatus, UninstallResult, UninstallScanResult } from "../lib/desktop";
 import { MCP_PRESETS, useMcp } from "../lib/mcp";
 import type { McpPreset } from "../lib/mcp";
 import { useQyn } from "../lib/store";
@@ -638,15 +638,15 @@ function AiSettingsSection() {
   return (
     <section className="glass rounded-2xl p-5">
       <SectionHeader title="AI assistant" icon={<Sparkles size={13} className="text-accent" />} />
-      <p className="text-[12.5px] leading-relaxed text-frost-500">
-        Qyn, the face on your Home screen, is powered by a <span className="text-frost-300">real language model</span>.
-        Connect it to a model you already run — Ollama on this PC, OpenAI, or any OpenAI-compatible endpoint — and it
-        can open apps, manage the vault and read your system. No fake assistant, ever.
+      <p className="mt-4 text-[12.5px] leading-relaxed text-frost-500">
+        Nex is powered by a <span className="text-frost-300">real language model</span>. Connect a model you already
+        run — Ollama on this PC, a cloud provider, or any OpenAI-compatible endpoint — and it plans, remembers and
+        talks with you. For building games, see the <span className="text-frost-300">builder model</span> below.
       </p>
 
       {/* Provider */}
       <p className="mt-4 text-[12.5px] font-medium text-frost-400">Provider</p>
-      <div className="mt-2 grid grid-cols-3 gap-2">
+      <div className="mt-2 grid grid-cols-2 gap-2 lg:grid-cols-3">
         {(Object.keys(PROVIDERS) as Array<keyof typeof PROVIDERS>).map((id) => {
           const active = config.provider === id;
           return (
@@ -656,8 +656,8 @@ function AiSettingsSection() {
                 void saveConfig({
                   ...config,
                   provider: id,
-                  endpoint: config.endpoint || PROVIDERS[id].endpoint,
-                  model: config.model || PROVIDERS[id].model,
+                  endpoint: PROVIDERS[id].endpoint || config.endpoint,
+                  model: PROVIDERS[id].model,
                 });
               }}
               className={cn(
@@ -670,9 +670,7 @@ function AiSettingsSection() {
               <p className={cn("text-[12.5px] font-semibold", active ? "text-frost-100" : "text-frost-300")}>
                 {PROVIDERS[id].label}
               </p>
-              <p className="mt-0.5 text-[10.5px] leading-snug text-frost-500">
-                {id === "ollama" ? "Local · free · private" : id === "openai" ? "Cloud · needs API key" : "Your own endpoint"}
-              </p>
+              <p className="mt-0.5 text-[10.5px] leading-snug text-frost-500">{PROVIDERS[id].hint}</p>
             </button>
           );
         })}
@@ -783,12 +781,126 @@ function AiSettingsSection() {
         )}
       </div>
 
+      <BuilderModelSection />
+
       <p className="mt-4 border-t border-white/6 pt-3 text-[11px] leading-relaxed text-frost-500">
         {isDesktop()
           ? "Saved locally in your user data folder (qynone.env, next to qynone-state.json). The API key never leaves this PC and is never logged."
           : "Saved in this browser for the preview. In the desktop app the same settings live in qynone.env on your PC. Note: in the web preview, a localhost Ollama instance can't be reached — use OpenAI or a public endpoint here."}
       </p>
     </section>
+  );
+}
+
+/* ------------------------------------------------------------------ */
+/* Builder model — a dedicated (usually frontier cloud) model for       */
+/* engine builds. AAA-scale work needs real design + code skill; a      */
+/* small local model can't carry it. Chat stays on the main model.      */
+/* ------------------------------------------------------------------ */
+
+function BuilderModelSection() {
+  const { config, saveConfig } = useAi();
+  const [showKey, setShowKey] = useState(false);
+  const builderOn = Boolean(config.builderModel || config.builderEndpoint);
+  const bProvider = config.builderProvider || "openrouter";
+
+  const setB = (patch: Partial<AiConfig>) => void saveConfig({ ...config, ...patch });
+
+  return (
+    <div className="mt-4 rounded-2xl border border-white/10 bg-white/[0.03] p-4">
+      <div className="flex items-center justify-between gap-3">
+        <div className="min-w-0">
+          <p className="text-[12.5px] font-semibold text-frost-100">Builder model for game builds</p>
+          <p className="mt-0.5 text-[11px] leading-relaxed text-frost-500">
+            Engine builds (Roblox Studio, Unreal) run on this model instead of the main one — a frontier cloud model
+            designs, codes and iterates at AAA quality while your local model keeps handling everyday chat.
+          </p>
+        </div>
+        <Toggle
+          checked={builderOn}
+          onChange={(v) =>
+            setB(
+              v
+                ? { builderProvider: "openrouter", builderEndpoint: PROVIDERS.openrouter.endpoint, builderModel: PROVIDERS.openrouter.model }
+                : { builderProvider: "", builderEndpoint: "", builderModel: "", builderKey: "" },
+            )
+          }
+        />
+      </div>
+
+      {builderOn && (
+        <div className="mt-4 space-y-3">
+          <div className="flex flex-wrap gap-1.5">
+            {(["openrouter", "openai", "groq", "custom"] as const).map((id) => {
+              const active = bProvider === id;
+              return (
+                <button
+                  key={id}
+                  onClick={() =>
+                    setB({
+                      builderProvider: id,
+                      builderEndpoint: PROVIDERS[id].endpoint || config.builderEndpoint || "",
+                      builderModel: PROVIDERS[id].model || config.builderModel || "",
+                    })
+                  }
+                  className={cn(
+                    "rounded-md border px-2.5 py-1 text-[11px] font-medium transition",
+                    active
+                      ? "border-[color-mix(in_srgb,var(--accent)_55%,transparent)] bg-accent-soft text-accent"
+                      : "border-white/8 bg-white/4 text-frost-400 hover:bg-white/8",
+                  )}
+                >
+                  {PROVIDERS[id].label}
+                </button>
+              );
+            })}
+          </div>
+
+          <div className="grid gap-3 sm:grid-cols-2">
+            <div>
+              <p className="mb-1.5 text-[11.5px] font-medium tracking-wide text-frost-300">Endpoint</p>
+              <input
+                value={config.builderEndpoint ?? ""}
+                onChange={(e) => setB({ builderEndpoint: e.target.value })}
+                placeholder={PROVIDERS[bProvider]?.endpoint || "https://…/v1"}
+                className="h-9 w-full rounded-xl border border-white/10 bg-white/5 px-3 font-mono text-[12px] text-frost-100 outline-none transition placeholder:text-frost-500/70 focus:border-[color-mix(in_srgb,var(--accent)_55%,transparent)]"
+              />
+            </div>
+            <div>
+              <p className="mb-1.5 text-[11.5px] font-medium tracking-wide text-frost-300">Model</p>
+              <input
+                value={config.builderModel ?? ""}
+                onChange={(e) => setB({ builderModel: e.target.value })}
+                placeholder={PROVIDERS[bProvider]?.model || "frontier model id"}
+                className="h-9 w-full rounded-xl border border-white/10 bg-white/5 px-3 font-mono text-[12px] text-frost-100 outline-none transition placeholder:text-frost-500/70 focus:border-[color-mix(in_srgb,var(--accent)_55%,transparent)]"
+              />
+            </div>
+          </div>
+
+          <div>
+            <p className="mb-1.5 text-[11.5px] font-medium tracking-wide text-frost-300">API key</p>
+            <div className="flex gap-2">
+              <input
+                type={showKey ? "text" : "password"}
+                value={config.builderKey ?? ""}
+                onChange={(e) => setB({ builderKey: e.target.value })}
+                placeholder="sk-or-…"
+                className="h-9 w-full rounded-xl border border-white/10 bg-white/5 px-3 font-mono text-[12px] text-frost-100 outline-none transition placeholder:text-frost-500/70 focus:border-[color-mix(in_srgb,var(--accent)_55%,transparent)]"
+              />
+              <button
+                onClick={() => setShowKey((v) => !v)}
+                className="h-9 shrink-0 rounded-xl border border-white/10 bg-white/5 px-3 text-[11px] font-medium text-frost-400 transition hover:bg-white/10 hover:text-frost-200"
+              >
+                {showKey ? "Hide" : "Show"}
+              </button>
+            </div>
+            <p className="mt-1.5 text-[10.5px] leading-relaxed text-frost-500">
+              Recommended: <span className="text-frost-300">Claude Sonnet 4.5</span> or <span className="text-frost-300">GPT-5-class</span> models via OpenRouter — one key, hundreds of models. Subagents ride this model too.
+            </p>
+          </div>
+        </div>
+      )}
+    </div>
   );
 }
 

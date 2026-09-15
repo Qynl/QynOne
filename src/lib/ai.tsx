@@ -8,6 +8,7 @@ import { apiContentFor, extractVisionData, hasImages, stripImagesFromMessages, v
 import { useNexEmotions } from "./emotion";
 import type { EmotionDebug, NexEvent } from "./emotion";
 import { clearNowPlaying, playOnAmazonMusic, setNowPlaying } from "./music";
+import { pickPreset, pickScaffold } from "./scaffolds";
 import systemPromptMd from "../system-prompt.md?raw";
 import { useQyn } from "./store";
 import { useVault } from "./vault";
@@ -158,10 +159,12 @@ interface ToolCall {
 /* Provider defaults                                                   */
 /* ------------------------------------------------------------------ */
 
-export const PROVIDERS: Record<string, { label: string; endpoint: string; model: string; needsKey: boolean }> = {
-  ollama: { label: "Ollama (local)", endpoint: "http://localhost:11434/v1", model: "", needsKey: false },
-  openai: { label: "OpenAI", endpoint: "https://api.openai.com/v1", model: "gpt-4o-mini", needsKey: true },
-  custom: { label: "Custom (OpenAI-compatible)", endpoint: "", model: "", needsKey: true },
+export const PROVIDERS: Record<string, { label: string; hint: string; endpoint: string; model: string; needsKey: boolean }> = {
+  ollama: { label: "Ollama (local)", hint: "Local · free · private", endpoint: "http://localhost:11434/v1", model: "", needsKey: false },
+  openai: { label: "OpenAI", hint: "Cloud · needs API key", endpoint: "https://api.openai.com/v1", model: "gpt-4o-mini", needsKey: true },
+  openrouter: { label: "OpenRouter", hint: "400+ models · frontier", endpoint: "https://openrouter.ai/api/v1", model: "anthropic/claude-sonnet-4.5", needsKey: true },
+  groq: { label: "Groq", hint: "Fastest · free tier", endpoint: "https://api.groq.com/openai/v1", model: "llama-3.3-70b-versatile", needsKey: true },
+  custom: { label: "Custom", hint: "Your own endpoint", endpoint: "", model: "", needsKey: true },
 };
 
 export function defaultEndpoint(provider: string): string {
@@ -219,16 +222,19 @@ function resolvedEndpoint(cfg: AiConfig): string {
 /* Only the ephemeral runtime context is appended here.                 */
 /* ------------------------------------------------------------------ */
 
-function buildSystemPrompt(memorySummary: string, engines: string[] = []): string {
+function buildSystemPrompt(memorySummary: string, engines: string[] = [], builderActive = false): string {
   const now = new Date();
   const memoryBlock = memorySummary
     ? `What you remember about this user (long-term memory, stored in ${MEMORY_PATH}):\n${memorySummary}\nUse this to be personal — greet them, reference their projects and preferences. When they correct or update something you remembered, save the correction with the remember tool.`
     : "You have no long-term memory of this user yet. When they tell you something personal (a name, a favorite, a preference, an ongoing project), use the remember tool to save it.";
   const engineBlock =
     engines.length > 0
-      ? `\n- Autonomous build mode is active (connected: ${engines.join(", ")}). When the user gives you a development goal, you OWN it end to end: plan, build, test through the engine's own tools, inspect what you made, critically evaluate it, improve, and test again — without asking permission between steps and without asking what to do next. You have a big step budget this session; use it. Multiple tool calls in one step run in parallel, so batch independent reads and edits together. Make creative decisions yourself (genre flavor, art direction, mechanics, difficulty, names) and state them confidently in one line each. Only pause to ask when a decision genuinely cannot be inferred AND would substantially change the result — that is rare. Never stop at "a basic version works": keep going until the game feels finished — menus, feedback, difficulty curve, polish. If interrupted, acknowledge it, state exactly where you stopped and what remains, and never pretend unfinished work is done. Before finishing, run /self-review and keep iterating until the quality score is honestly excellent. Then finish with what you completed, what you verified, and what you would improve next.`
+      ? `\n- Autonomous build mode is active (connected: ${engines.join(", ")}). When the user gives you a development goal, you OWN it end to end: plan, build, test through the engine's own tools, inspect what you made, critically evaluate it, improve, and test again — without asking permission between steps and without asking what to do next. You have a big step budget this session; use it. Multiple tool calls in one step run in parallel, so batch independent reads and edits together. Make creative decisions yourself (genre flavor, art direction, mechanics, difficulty, names) and state them confidently in one line each. Only pause to ask when a decision genuinely cannot be inferred AND would substantially change the result — that is rare. Never stop at "a basic version works": keep going until the game feels finished — menus, feedback, difficulty curve, polish. If interrupted, acknowledge it, state exactly where you stopped and what remains, and never pretend unfinished work is done. Before finishing, run /self-review and keep iterating until the quality score is honestly excellent. Then finish with what you completed, what you verified, and what you would improve next.\n- WORKING DISCIPLINE (this is how you punch far above your weight): (1) START FROM SCAFFOLDS — the scaffold tool hands you complete, proven gameplay code and tuned lighting/material presets; adapt and extend them instead of writing everything from scratch, and never remove the safety logic inside a scaffold. (2) BATCH — make all independent engine calls in the same step; sequential single calls waste your budget. (3) BE TERSE — between tool steps, output at most one short sentence of narration; never write essays mid-build. (4) VERIFY AFTER EVERY MAJOR CHANGE — one playtest or screenshot beats ten assumptions. (5) IF A TOOL CALL FAILS, change the arguments or the approach and retry — never repeat the identical failing call. (6) COPY ENGINE VALUES, DO NOT IMPROVISE THEM — when the scaffold or a preset gives exact lighting or material numbers, use them as written.`
       : "";
-  return `${systemPromptMd.trim()}\n\n---\n\n## Runtime context (refreshed on every request)\n\n- Today: ${now.toLocaleDateString(undefined, { weekday: "long", year: "numeric", month: "long", day: "numeric" })}. Current time: ${now.toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit" })}.\n- Vault budget: max ${VAULT_MAX_NOTES} notes, ${(NOTE_MAX_CHARS / 1000).toFixed(0)} KB per note. Memory file: ${MEMORY_PATH} (capped at ${(MEMORY_MAX_CHARS / 1000).toFixed(1)} KB).\n- Connected MCP engines right now: ${engines.length > 0 ? engines.join(", ") : "none — if the user asks for engine work (Roblox, Unreal, …), say you need the QynOne desktop app and the engine running with its MCP server enabled (Settings → Connections)."}${engineBlock}\n- ${memoryBlock}`;
+  const builderBlock = builderActive
+    ? "\n- You are running on your dedicated builder model right now — a stronger mind than your everyday chat model. Use the depth: hold the whole game in your head, design real systems, write clean code."
+    : "";
+  return `${systemPromptMd.trim()}\n\n---\n\n## Runtime context (refreshed on every request)\n\n- Today: ${now.toLocaleDateString(undefined, { weekday: "long", year: "numeric", month: "long", day: "numeric" })}. Current time: ${now.toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit" })}.\n- Vault budget: max ${VAULT_MAX_NOTES} notes, ${(NOTE_MAX_CHARS / 1000).toFixed(0)} KB per note. Memory file: ${MEMORY_PATH} (capped at ${(MEMORY_MAX_CHARS / 1000).toFixed(1)} KB).\n- Connected MCP engines right now: ${engines.length > 0 ? engines.join(", ") : "none — if the user asks for engine work (Roblox, Unreal, …), say you need the QynOne desktop app and the engine running with its MCP server enabled (Settings → Connections)."}${engineBlock}${builderBlock}\n- ${memoryBlock}`;
 }
 
 /* ------------------------------------------------------------------ */
@@ -312,6 +318,39 @@ async function resolveModel(cfg: AiConfig): Promise<string> {
     }
   }
   return defaultModel(cfg.provider) || "gpt-4o-mini";
+}
+
+/** Model + config for engine builds: the dedicated builder model when the
+ *  user configured one, otherwise the main model. Subagents only run inside
+ *  build sessions, so they ride the builder model too. */
+async function resolveBuildTarget(cfg: AiConfig): Promise<{ cfg: AiConfig; model: string }> {
+  if (cfg.builderModel || cfg.builderEndpoint) {
+    const bcfg: AiConfig = {
+      ...cfg,
+      provider: cfg.builderProvider || cfg.provider,
+      endpoint: cfg.builderEndpoint || cfg.endpoint,
+      key: cfg.builderKey || cfg.key,
+    };
+    const model = cfg.builderModel || (await resolveModel(bcfg));
+    if (model) return { cfg: bcfg, model };
+  }
+  return { cfg, model: await resolveModel(cfg) };
+}
+
+/** Pre-assembled kickoff for a build goal: the matching proven scaffold code
+ *  and tuned scene preset values, injected into the session's first context.
+ *  A small local model builds far better from proven structure than from a
+ *  blank page — this is the single biggest quality lever for local models. */
+function scaffoldKickoffFor(goal: string): string | null {
+  const sc = pickScaffold(goal);
+  const preset = pickPreset(goal);
+  if (!sc && !preset) return null;
+  return [
+    "__QYN_SCAFFOLD__ — pre-attached build assets for this goal. Use them.",
+    sc ? `Scaffold "${sc.label}" — already provides: ${sc.provides.join(", ")}. Adapt this code first; keep its checkpoint/state/safety logic intact. Do not rewrite it from scratch unless the design genuinely requires it.` : "",
+    sc ? sc.code : "",
+    preset ? `Scene preset "${preset.label}" (${preset.mood}) — copy these exact values into the engine:\nLIGHTING: ${preset.lighting}\nMATERIALS: ${preset.materials}\nAUDIO: ${preset.audio}` : "",
+  ].filter(Boolean).join("\n\n");
 }
 
 /* ------------------------------------------------------------------ */
@@ -835,8 +874,9 @@ export function AiProvider({
       logActivity({ kind: "phase", text: `${def.emoji} ${def.title} spawned — ${run.task.slice(0, 150)}`, subagent: def.role });
       try {
         const cfg = configRef.current;
-        const model = await resolveModel(cfg);
-        const result = await executeSubagentRun(run, spec, toolsAvail, cfg, model, epoch);
+        /* Subagents only run inside build sessions — they ride the builder model too. */
+        const { cfg: runCfg, model } = await resolveBuildTarget(cfg);
+        const result = await executeSubagentRun(run, spec, toolsAvail, runCfg, model, epoch);
         const interrupted =
           result.status === "blocked" &&
           (epoch !== sessionEpochRef.current || stopRef.current || subagentAbortRef.current || abortIdsRef.current.has(run.id));
@@ -1118,6 +1158,27 @@ export function AiProvider({
 
   const tools = useMemo<AiToolDef[]>(() => {
     return [
+      {
+        name: "scaffold",
+        usage: "/scaffold <obby|survival|collect|horror>",
+        description: "Get a complete, proven gameplay skeleton plus a tuned lighting/material preset for the genre. Returns runnable code and exact engine values — adapt them, do not rebuild from scratch and do not remove scaffold safety logic.",
+        parameters: {
+          type: "object",
+          properties: { genre: { type: "string", description: "obby, survival, collect or horror" } },
+          required: ["genre"],
+        },
+        run: (args) => {
+          const q = String(args.genre ?? args.query ?? "");
+          const s = pickScaffold(q);
+          const p = pickPreset(`${goalRef.current} ${q}`);
+          if (!s && !p) return `No scaffold matches "${q}". Available: obby, survival, collect, horror. Presets: horror-night, sunny-adventure, neon-city, cozy-interior. Build from scratch, but copy exact lighting/material values from the presets where they fit.`;
+          return [
+            s ? `SCAFFOLD: ${s.label} — already provides: ${s.provides.join(", ")}. Adapt this code; keep its checkpoint/state/safety logic intact.` : "",
+            s ? s.code : "",
+            p ? `\nSCENE PRESET "${p.label}" (${p.mood}) — copy these values exactly:\nLIGHTING: ${p.lighting}\nMATERIALS: ${p.materials}\nAUDIO: ${p.audio}` : "",
+          ].filter(Boolean).join("\n\n");
+        },
+      },
       {
         name: "navigate",
         usage: "/navigate <home|ai|settings>",
@@ -1683,6 +1744,8 @@ export function AiProvider({
         issuesRef.current = [];
         resumeRef.current = null;
       }
+      /* Auto-attach the matching proven scaffold for this goal. */
+      const scaffoldKickoff = engineSession && !isResume ? scaffoldKickoffFor(goalRef.current) : null;
       react({ kind: "task-start", task: engineSession ? "build" : "chat" });
       setActivity([]);
       setToolCount(0);
@@ -1699,7 +1762,7 @@ export function AiProvider({
       /* Engine builds run long: a generous per-model-call timeout and a big
          step budget (each tool result feeds the next decision), guarded by
          an overall session cap so Nex always comes back with a report. */
-      const sessionStart = Date.now();
+      let sessionStart = Date.now();
       const MAX_STEPS = engineSession ? 160 : 12;
       const SESSION_MS = 45 * 60_000;
       const STEP_MS = 240_000;
@@ -1710,7 +1773,15 @@ export function AiProvider({
       let msgsForResume: Array<Record<string, unknown>> | null = null;
 
       try {
-        const model = await resolveModel(cfg);
+        /* Engine builds run on the dedicated builder model when one is set —
+           AAA work needs a frontier model; everyday chat stays on the main. */
+        const { cfg: runCfg, model } = engineSession ? await resolveBuildTarget(cfg) : { cfg, model: await resolveModel(cfg) };
+        if (engineSession && runCfg === cfg && /\b\d{1,2}b\b/i.test(model)) {
+          logActivity({
+            kind: "phase",
+            text: `Advisory: "${model}" looks like a small local model — AAA-scale builds land far stronger on a frontier builder model (Settings → AI → Builder model).`,
+          });
+        }
         const history = messages
           .filter((m) => m.role === "user" || m.role === "ai")
           .slice(-12)
@@ -1721,12 +1792,12 @@ export function AiProvider({
         const resumeTail = isResume && resumeRef.current ? resumeRef.current : null;
         const msgs: Array<Record<string, unknown>> = resumeTail
           ? [
-              { role: "system", content: buildSystemPrompt(memory.summary, engines) },
+              { role: "system", content: buildSystemPrompt(memory.summary, engines, engineSession && runCfg !== cfg) },
               ...resumeTail,
               { role: "user", content: userContent },
             ]
           : [
-              { role: "system", content: buildSystemPrompt(memory.summary, engines) },
+              { role: "system", content: buildSystemPrompt(memory.summary, engines, engineSession && runCfg !== cfg) },
               ...history,
               { role: "user", content: userContent },
             ];
@@ -1749,25 +1820,45 @@ export function AiProvider({
           msgsArr.splice(1, 0, { role: "user", content: digest });
         };
         upsertStateDigest(msgs);
+        if (scaffoldKickoff) msgs.splice(2, 0, { role: "user", content: scaffoldKickoff });
         msgsForResume = msgs;
 
         let finalText = "";
         let pendingVision: string | null = null;
-        for (let step = 0; step < MAX_STEPS; step++) {
-          if (Date.now() - sessionStart > SESSION_MS) {
-            stoppedEarly = "time";
-            break;
+        /* Legs: when the step or time budget expires mid-build, the budget
+           refreshes automatically and the build continues — a small local
+           model should never stall on a "say continue" round-trip. Natural
+           completion (no more tool calls) still ends the session. */
+        let step = 0;
+        let leg = 0;
+        let nudged = false;
+        const MAX_LEGS = 4;
+        while (!stopRef.current) {
+          if (step >= MAX_STEPS || Date.now() - sessionStart > SESSION_MS) {
+            if (stoppedEarly === "") stoppedEarly = step >= MAX_STEPS ? "steps" : "time";
+            leg += 1;
+            if (leg >= MAX_LEGS) break;
+            logActivity({ kind: "phase", text: `Budget reached after ${toolsRun} tool call${toolsRun === 1 ? "" : "s"} — continuing automatically (leg ${leg + 1} of ${MAX_LEGS})` });
+            announce("*refreshing the build budget — continuing*");
+            sessionStart = Date.now();
+            step = 0;
+            stoppedEarly = "";
+            finalText = "";
+            msgs.push({ role: "user", content: "__QYN_LEG__ Build budget refreshed — continue the build. Pick up exactly where you left off; never repeat finished work; never ask what to do next." });
+            upsertStateDigest(msgs);
+            continue;
           }
           if (stopRef.current) {
             stoppedEarly = "stop";
             break;
           }
+          step += 1;
           const controller = new AbortController();
           sessionAbortRef.current = controller;
           const timeout = window.setTimeout(() => controller.abort(), STEP_MS);
           let res: ChatResult;
           try {
-            res = await chatOnce(cfg, model, msgs, modelTools, controller.signal, engineSession ? { temperature: 0.45, maxTokens: 4096 } : undefined);
+            res = await chatOnce(runCfg, model, msgs, modelTools, controller.signal, engineSession ? { temperature: 0.45, maxTokens: 4096 } : undefined);
           } finally {
             window.clearTimeout(timeout);
           }
@@ -1775,6 +1866,17 @@ export function AiProvider({
             logActivity({ kind: "thought", text: res.content.trim().slice(0, 220) });
           }
           if (!res.toolCalls || res.toolCalls.length === 0) {
+            /* Premature-stop guard: a build session that "finishes" after
+               almost no tool calls is almost always a small model going
+               chatty instead of building. One corrective nudge, then accept
+               the answer if it still stops. */
+            if (engineSession && toolsRun < 3 && !nudged && !stopRef.current) {
+              nudged = true;
+              logActivity({ kind: "phase", text: "Session stopped before any real build work — nudging Nex to actually build" });
+              msgs.push({ role: "user", content: "__QYN_NUDGE__ You stopped without doing the work. This is a BUILD session: start now — call the scaffold tool for your genre, then use the engine tools to create the game, step by step, until it is genuinely playable and polished. Do not reply with a plan or questions; act." });
+              upsertStateDigest(msgs);
+              continue;
+            }
             finalText = res.content;
             break;
           }
@@ -1801,14 +1903,25 @@ export function AiProvider({
             logActivity({ kind: "tool-start", text: label, engine: isEngine && tool ? tool.usage.split(" · ")[0] : undefined, detail: summarizeArgs(tc.function.arguments) });
             const run = async (): Promise<string> => {
               try {
-                const args = (() => {
-                  try {
-                    return JSON.parse(tc.function.arguments ?? "{}") as Record<string, unknown>;
-                  } catch {
-                    return {};
-                  }
-                })();
-                const out = tool ? await tool.run(args) : JSON.stringify({ error: `unknown tool ${tc.function.name}` });
+                /* Repair, not abort: a small model's malformed JSON or a
+                   hallucinated tool name gets a corrective result it can act
+                   on immediately, so one bad call never derails the build. */
+                let args: Record<string, unknown>;
+                try {
+                  args = JSON.parse(tc.function.arguments ?? "{}") as Record<string, unknown>;
+                } catch {
+                  return JSON.stringify({
+                    error: `Malformed JSON arguments for ${tc.function.name} — the call did NOT run.`,
+                    fix: "Resend this exact tool call with valid JSON arguments.",
+                    received: String(tc.function.arguments ?? "").slice(0, 200),
+                  });
+                }
+                if (!tool) {
+                  const names = modelTools.map((t) => t.name);
+                  const near = names.filter((n) => n.includes(tc.function.name.slice(0, 6)) || tc.function.name.includes(n.slice(0, 6))).slice(0, 4);
+                  return JSON.stringify({ error: `Unknown tool "${tc.function.name}".`, available: near.length > 0 ? near : names.slice(0, 12) });
+                }
+                const out = await tool.run(args);
                 return out;
               } catch (e) {
                 return JSON.stringify({ error: String((e as Error)?.message ?? e) });
@@ -1833,7 +1946,7 @@ export function AiProvider({
           /* Vision: the freshly captured screenshot rides into the next model
              call as a real image part. Text-only models get it stripped by
              chatOnce's fallback and never brick the session. */
-          if (pendingVision && visionEnabled(cfg)) {
+          if (pendingVision && visionEnabled(runCfg)) {
             msgs.push({
               role: "user",
               content: [

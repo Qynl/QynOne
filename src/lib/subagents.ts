@@ -410,6 +410,8 @@ export function buildSubAgentBrief(spec: SubAgentSpec): string {
     spec.expectedResult ? `- Expected result: ${String(spec.expectedResult).slice(0, 600)}` : "",
     spec.quality ? `- Quality requirements: ${String(spec.quality).slice(0, 600)}` : "",
     `- Your step budget: ${budgetFor(spec)} engine-tool steps. Work efficiently — batch independent reads into one step.`,
+    "- If a scaffold or scene preset was attached for this build, start from it — adapt proven code and copy exact lighting/material values instead of improvising them. Never remove scaffold safety logic.",
+    "- If a tool call fails, change the arguments or the approach and retry — never repeat the identical failing call.",
     "",
     engineNote,
     "",

@@ -107,6 +107,12 @@ Nex speaks to a real model through one OpenAI-compatible client:
 Type `/` in the workshop to list Nex's tools; the model also calls tools on its own when a
 task needs one.
 
+**Builder model.** Game builds deserve a stronger mind than everyday chat: set a dedicated
+builder model in Settings → AI (OpenRouter/Groq/OpenAI/custom — e.g. Claude Sonnet 4.5), and
+every engine build and subagent runs on it while your local model keeps handling chat. Asset
+standards are baked into the build pipeline: composed lighting, deliberate materials, real
+meshes, sound design — no engine-gray defaults.
+
 > In the web preview, a `localhost` Ollama instance can't be reached — use a public endpoint
 > there. In the installed app, Ollama works out of the box.
 
